@@ -1,0 +1,40 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/docker-existing-dockerfile
+{
+  "name": "Existing Dockerfile",
+  "build": {
+    // Sets the run context to one level up instead of the .devcontainer folder.
+    "context": "..",
+    // Update the 'dockerFile' property if you aren't using the standard 'Dockerfile' filename.
+    "dockerfile": "../Dockerfile"
+  },
+  "forwardPorts": [
+    4200 // Change from the default 3000 for OpenDevin or other containers
+  ],
+  "runArgs": ["--platform", "linux/amd64"],
+  "containerUser": "vscode",
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": true,
+  // Configure tool-specific properties.
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "vscode-icons-team.vscode-icons",
+        "ms-python.pylint",
+        "mechatroner.rainbow-csv",
+        "tamasfe.even-better-toml",
+        "charliermarsh.ruff",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  },
+  // Mount the folder with the ssh key
+  "mounts": [
+    "type=bind,source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,readonly"
+  ],
+  // Run the postCreateCommand script
+  // "postCreateCommand": "bash .devcontainer/postCreateCommand.sh",
+  // Run the postStartCommand script
+  "postStartCommand": "bash .devcontainer/postStartCommand.sh"
+}
