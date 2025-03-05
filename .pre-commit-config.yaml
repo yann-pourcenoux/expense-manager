@@ -7,22 +7,12 @@ repos:
     -   id: check-yaml
     -   id: check-added-large-files
 
--   repo: https://github.com/psf/black
-    rev: 23.12.1  # Matches black>=23.0.0
+-   repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.9
     hooks:
-    -   id: black
-        language_version: python3.12
-
--   repo: https://github.com/pycqa/isort
-    rev: 5.13.2  # Matches isort>=5.12.0
-    hooks:
-    -   id: isort
-
--   repo: https://github.com/pycqa/flake8
-    rev: 6.1.0  # Matches flake8>=6.0.0
-    hooks:
-    -   id: flake8
-        additional_dependencies: [flake8-docstrings]
+    -   id: ruff
+        args: [--fix]
+    -   id: ruff-format
 
 -   repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.8.0  # Matches mypy>=1.0.0

@@ -1,0 +1,175 @@
+{
+  "projectDescription": "A Streamlit-based Expense Manager application that helps users track and visualize their expenses. The application uses Supabase as the backend database and provides authentication, expense tracking, analytics features, expense splitting, and income tracking.",
+
+  "technology": {
+    "frontend": "Streamlit",
+    "backend": "Python",
+    "database": "Supabase",
+    "authentication": "Supabase Auth",
+    "dependencies": [
+      "streamlit",
+      "supabase",
+      "pandas",
+      "pydantic",
+      "plotly",
+      "python-dotenv"
+    ]
+  },
+
+  "codeStyle": {
+    "python": {
+      "docstringFormat": "Google",
+      "typeHinting": true,
+      "pep8Compliant": true,
+      "optionalTypeStyle": "type | None"
+    }
+  },
+
+  "projectStructure": {
+    "mainApp": "expense_manager/app.py",
+    "modules": {
+      "auth": "Authentication management",
+      "db": "Database interactions",
+      "pages": "Streamlit UI pages",
+      "utils": "Utility functions and models"
+    }
+  },
+
+  "databaseSchema": {
+    "tables": {
+      "auth.users": {
+        "fields": {
+          "id": "uuid (primary key)",
+          "email": "string (email)",
+          "created_at": "timestamp"
+        },
+        "description": "Stores user authentication information (managed by Supabase Auth)"
+      },
+      "profiles": {
+        "fields": {
+          "id": "int8 (primary key)",
+          "created_at": "timestamptz",
+          "display_name": "text",
+          "user_id": "uuid (foreign key to auth.users.id)"
+        },
+        "description": "Stores user profile information"
+      },
+      "categories": {
+        "fields": {
+          "id": "int8 (primary key)",
+          "created_at": "timestamptz",
+          "name": "text",
+          "description": "text"
+        },
+        "description": "Stores expense categories for classification"
+      },
+      "expenses": {
+        "fields": {
+          "id": "int8 (primary key)",
+          "created_at": "timestamptz",
+          "reporter_id": "int8 (foreign key to profiles.id)",
+          "date": "date",
+          "category_id": "int8 (foreign key to categories.id)",
+          "payer_id": "int8 (foreign key to profiles.id)",
+          "is_shared": "bool",
+          "amount": "numeric",
+          "description": "text",
+          "name": "text"
+        },
+        "description": "Stores expense records including reporter, payer, and whether expenses are shared"
+      },
+      "expenses_split": {
+        "fields": {
+          "id": "int8 (primary key)",
+          "created_at": "timestamptz",
+          "expense_id": "int8 (foreign key to expenses.id)",
+          "user_id": "int8 (foreign key to profiles.id)",
+          "amount": "numeric"
+        },
+        "description": "Tracks how expenses are split between users"
+      },
+      "monthly_income": {
+        "fields": {
+          "id": "int8 (primary key)",
+          "created_at": "timestamptz",
+          "user_id": "int8 (foreign key to profiles.id)",
+          "amount": "numeric",
+          "month_date": "date"
+        },
+        "description": "Tracks monthly income for each user"
+      }
+    },
+    "relationships": [
+      {
+        "name": "user_profiles",
+        "type": "one-to-one",
+        "from": "auth.users.id",
+        "to": "profiles.user_id",
+        "description": "One user can have one profile"
+      },
+      {
+        "name": "user_reporter_expenses",
+        "type": "one-to-many",
+        "from": "profiles.id",
+        "to": "expenses.reporter_id",
+        "description": "One user can report many expenses"
+      },
+      {
+        "name": "user_payer_expenses",
+        "type": "one-to-many",
+        "from": "profiles.id",
+        "to": "expenses.payer_id",
+        "description": "One user can be the payer for many expenses"
+      },
+      {
+        "name": "category_expenses",
+        "type": "one-to-many",
+        "from": "categories.id",
+        "to": "expenses.category_id",
+        "description": "One category can be used for many expenses"
+      },
+      {
+        "name": "expense_splits",
+        "type": "one-to-many",
+        "from": "expenses.id",
+        "to": "expenses_split.expense_id",
+        "description": "One expense can be split among multiple users"
+      },
+      {
+        "name": "user_expense_splits",
+        "type": "one-to-many",
+        "from": "profiles.id",
+        "to": "expenses_split.user_id",
+        "description": "One user can participate in many expense splits"
+      },
+      {
+        "name": "user_monthly_income",
+        "type": "one-to-many",
+        "from": "profiles.id",
+        "to": "monthly_income.user_id",
+        "description": "One user can have many monthly income records"
+      }
+    ]
+  },
+
+  "models": {
+    "Expense": "Complete expense record with ID and metadata",
+    "ExpenseCreate": "Data required to create a new expense",
+    "ExpenseUpdate": "Optional fields for updating an expense",
+    "ExpenseSplit": "Record of how an expense is split between users",
+    "Category": "Expense category with ID and properties",
+    "CategoryCreate": "Data required to create a new category",
+    "User": "User profile with authentication details",
+    "MonthlyIncome": "Monthly income record for a user",
+    "ExpenseSummary": "Aggregated expense data for analytics"
+  },
+
+  "features": {
+    "authentication": "User signup and login",
+    "expenseTracking": "Add, edit, delete, and view expenses",
+    "expenseSplitting": "Split expenses between multiple users",
+    "incomeTracking": "Track monthly income for each user",
+    "categoryManagement": "Create and manage expense categories",
+    "analytics": "Visualize expense data by category, date",
+    "filtering": "Filter expenses by date range and category"
+  }
