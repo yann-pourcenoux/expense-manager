@@ -8,14 +8,14 @@ version = "0.1.0"
 description = "A simple interface to get insights from expenses"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "MIT"}
+license = { text = "MIT" }
 dependencies = [
     "streamlit>=1.27.0",
     "supabase>=1.0.3",
     "python-dotenv>=1.0.0",
     "pandas>=2.0.0",
     "plotly>=5.14.0",
-    "pydantic>=2.0.0",
+    "pydantic[email]>=2.0.0",
     "email-validator>=2.0.0",
 ]
 
@@ -25,12 +25,13 @@ dev = [
     "ruff>=0.9.9",
     "mypy>=1.0.0",
     "pre-commit>=3.0.0",
+    "loguru>=0.7.3",
 ]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 88
-select = ["E", "F", "I", "D"]  # Error, Flake8, Import sorting, Docstrings
+select = ["E", "F", "I", "D"] # Error, Flake8, Import sorting, Docstrings
 ignore = []
 
 [tool.ruff.format]

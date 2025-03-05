@@ -317,6 +317,9 @@ def create_income_vs_expenses_chart(
     return fig
 
 
+import loguru
+
+
 def create_split_expenses_summary(
     split_expenses_df: pd.DataFrame, user_id: str, users_map: Dict[str, str]
 ) -> Dict[str, Any]:
@@ -339,7 +342,10 @@ def create_split_expenses_summary(
         }
 
     # Filter to shared expenses only
-    shared_df = split_expenses_df[split_expenses_df["is_shared"] is True].copy()
+    shared_df = split_expenses_df[split_expenses_df["is_shared"] == True].copy()
+
+    loguru.logger.info(split_expenses_df)
+    loguru.logger.info(shared_df)
 
     if shared_df.empty:
         return {
@@ -375,7 +381,7 @@ def create_split_expenses_summary(
 
         # Find expenses where current user paid for this user
         current_paid_for_user = shared_df[
-            (shared_df["payer_id"] == user_id) & (shared_df["is_shared"] is True)
+            (shared_df["payer_id"] == user_id) & (shared_df["is_shared"] == True)
         ]["per_person_amount"].sum()
 
         # Net balance

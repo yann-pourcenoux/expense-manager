@@ -82,7 +82,7 @@ class DatabaseManager:
                 .insert(
                     {
                         "reporter_id": user_id,  # int8 type
-                        "payer_id": user_id if payer_id == 1 else payer_id,  # int8 type
+                        "payer_id": payer_id,  # int8 type
                         "amount": amount,
                         "category_id": int_category_id,  # int8 type
                         "date": date.isoformat(),

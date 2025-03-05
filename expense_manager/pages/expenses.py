@@ -100,7 +100,7 @@ def display_add_expense_form(db_manager: DatabaseManager, user_id: str) -> None:
     # Create the expense form
     with st.form("add_expense_form"):
         # Amount
-        amount = st.number_input("Amount", min_value=0.01, format="%.2f")
+        amount = st.number_input("Amount", min_value=1, format="%.2f", value=None)
 
         # Category
         category_name = st.selectbox("Category", options=list(category_options.keys()))
@@ -122,18 +122,18 @@ def display_add_expense_form(db_manager: DatabaseManager, user_id: str) -> None:
         # Create a mapping of user IDs to their details including display names
         user_details = {}
         for u in profiles:
-            profile_id_value = u["id"]
-            user_details[profile_id_value] = {
-                "id": profile_id_value,
+            user_id_value = u["user_id"]
+            user_details[user_id_value] = {
+                "user_id": user_id_value,
                 "display_name": u["display_name"],
             }
 
-        # Create options for the payer dropdown with display name + email
+        # Create options for the payer dropdown with display name
         payer_options = {}
         for user_detail in user_details.values():
             display_name = user_detail["display_name"]
-            profile_id_value = user_detail["id"]
-            payer_options[display_name] = profile_id_value
+            user_id_value = user_detail["user_id"]
+            payer_options[display_name] = user_id_value
 
         # If no users found, provide a fallback option
         if not payer_options:
@@ -162,7 +162,7 @@ def display_add_expense_form(db_manager: DatabaseManager, user_id: str) -> None:
             selected_payer = st.selectbox(
                 "Payer",
                 options=payer_option_list,
-                index=default_index if default_index < len(payer_option_list) else 0,
+                index=default_index,
                 help="Select who paid for this expense",
             )
 
@@ -185,13 +185,11 @@ def display_add_expense_form(db_manager: DatabaseManager, user_id: str) -> None:
                 # Skip the current user as they'll be added automatically
                 if user_id_key != user_id:
                     display_name = user_detail["display_name"]
-                    email = user_detail["email"]
 
-                    # Use display name if available, otherwise use email
-                    if display_name:
-                        display_text = f"{display_name} ({email})"
-                    else:
-                        display_text = email
+                    # Use display name if available, otherwise use a default label
+                    display_text = (
+                        display_name if display_name else f"User {user_id_key}"
+                    )
 
                     split_user_options[display_text] = user_id_key
 
@@ -309,7 +307,7 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
     profiles_result = db_manager.get_all_profiles()
     profiles = profiles_result.get("profiles", [])
 
-    users_map = {u["id"]: u["display_name"] for u in profiles}
+    users_map = {u["user_id"]: u["display_name"] for u in profiles}
 
     # Format for display
     display_df = expenses_df.copy()
@@ -333,6 +331,8 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
     # Add payer information
     if "payer_id" in display_df.columns:
         display_df["payer"] = display_df["payer_id"].map(users_map)
+        # Ensure the mapping worked correctly
+        display_df["payer"] = display_df["payer"].fillna("Unknown")
 
     # Select columns for display
     display_columns = [
@@ -377,7 +377,7 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
                         with st.container():
                             cols = st.columns([3, 2, 2, 2])
                             with cols[0]:
-                                st.write(f"**{user_balance['email']}**")
+                                st.write(f"**{user_balance['display_name']}**")
                             with cols[1]:
                                 st.write(
                                     f"Paid for you: {format_currency(user_balance['paid_for_you'])}"
@@ -592,7 +592,12 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
                     if user_id_key != user_id:
                         display_name = user_detail["display_name"]
 
-                        split_user_options[display_name] = user_id_key
+                        # Use display name if available, otherwise use a default label
+                        display_text = (
+                            display_name if display_name else f"User {user_id_key}"
+                        )
+
+                        split_user_options[display_text] = user_id_key
 
                 # Only show the user selection if there are other users
                 if split_user_options:
