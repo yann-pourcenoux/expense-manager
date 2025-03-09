@@ -47,14 +47,14 @@ def display_category_manager() -> None:
         st.success("Category created successfully!")
         st.session_state.category_added = False
 
-    # Tabs for different actions
-    tab1, tab2 = st.tabs(["Add Category", "View/Edit Categories"])
+    # Display add category form
+    display_add_category_form(db_manager)
 
-    with tab1:
-        display_add_category_form(db_manager)
+    # Add a separator between sections
+    st.markdown("---")
 
-    with tab2:
-        display_category_list(db_manager)
+    # Display category list below
+    display_category_list(db_manager)
 
 
 def set_edit_category(category_id: str, category: Dict[str, Any]) -> None:
@@ -144,9 +144,6 @@ def display_category_list(db_manager: DatabaseManager) -> None:
     if not categories:
         st.info("No categories found. Add some categories to get started!")
         return
-
-    # Display categories in a more visual format
-    st.subheader("All Categories")
 
     # Calculate columns based on number of categories (3 columns by default)
     num_columns = 3
