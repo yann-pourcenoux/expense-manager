@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from expense_manager.db.db_manager import DatabaseManager
-from expense_manager.utils.analytics import create_income_vs_expenses_chart
+from expense_manager.utils.analytics import create_income_bar_chart
 from expense_manager.utils.models import format_currency
 
 
@@ -65,7 +65,7 @@ def display_set_income_form(db_manager: DatabaseManager, user_id: str) -> None:
     selected_month = selected_month.replace(day=1)
 
     # Check if there's already income for this month
-    income_result = db_manager.get_monthly_income(user_id, selected_month)
+    income_result = db_manager.get_monthly_income(int(user_id), selected_month)
     existing_income = income_result.get("income")
 
     if "error" in income_result:
@@ -87,13 +87,15 @@ def display_set_income_form(db_manager: DatabaseManager, user_id: str) -> None:
         submitted = st.form_submit_button("Save Income")
 
         if submitted:
-            # Set the income for the month
-            result = db_manager.set_monthly_income(
-                user_id=user_id, amount=income_amount, month_date=selected_month
+            # Process the form submission
+            success = db_manager.set_monthly_income(
+                user_id=int(user_id),
+                amount=income_amount,
+                month_date=selected_month,
             )
 
-            if "error" in result:
-                st.error(f"Error saving income: {result['error']}")
+            if "error" in success:
+                st.error(f"Error saving income: {success['error']}")
             else:
                 if existing_income:
                     st.success("Income updated successfully!")
@@ -112,13 +114,13 @@ def display_income_history(db_manager: DatabaseManager, user_id: str) -> None:
     st.header("Income History")
 
     # Get income history
-    income_history = db_manager.get_income_history(user_id, limit=12)
+    history_result = db_manager.get_income_history(int(user_id))
 
-    if "error" in income_history:
-        st.error(f"Error retrieving income history: {income_history['error']}")
+    if "error" in history_result:
+        st.error(f"Error retrieving income history: {history_result['error']}")
         return
 
-    income_data = income_history.get("income_history", [])
+    income_data = history_result.get("income_history", [])
 
     if not income_data:
         st.info("No income history found. Set your monthly income to get started!")
@@ -147,30 +149,6 @@ def display_income_history(db_manager: DatabaseManager, user_id: str) -> None:
     # Display the income history
     st.dataframe(display_df[display_columns], use_container_width=True)
 
-    # Get expense data for comparison
-    current_year = datetime.now().year
-    start_date = datetime(current_year - 1, 1, 1)
-    end_date = datetime(current_year, 12, 31)
-
-    # Get expenses for comparison chart
-    expenses_result = db_manager.get_expenses(
-        user_id=user_id, start_date=start_date, end_date=end_date
-    )
-    expenses = expenses_result.get("expenses", [])
-
-    # Get categories for expense processing
-    categories_result = db_manager.get_categories()
-    categories = categories_result.get("categories", [])
-
-    # Create expense data summary
-    from expense_manager.utils.analytics import prepare_expense_data, summarize_expenses
-
-    if expenses:
-        expenses_df = prepare_expense_data(expenses)
-        expense_summary = summarize_expenses(expenses_df, categories)
-
-        # Create income vs expenses chart
-        chart = create_income_vs_expenses_chart(expense_summary, income_data)
-        st.plotly_chart(chart, use_container_width=True)
-    else:
-        st.info("No expense data available for comparison chart.")
+    # Create and display the income bar chart
+    chart = create_income_bar_chart(income_data)
+    st.plotly_chart(chart, use_container_width=True)

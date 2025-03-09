@@ -19,6 +19,9 @@ dependencies = [
     "email-validator>=2.0.0",
 ]
 
+[project.scripts]
+run_app = "expense_manager.cli:run_app"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",

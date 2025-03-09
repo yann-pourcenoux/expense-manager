@@ -97,7 +97,11 @@ def summarize_expenses(
         for date, amount in date_data.items():
             by_date.append(
                 {
-                    "date": date.strftime("%Y-%m-%d"),
+                    "date": (
+                        str(date)
+                        if not hasattr(date, "strftime")
+                        else date.strftime("%Y-%m-%d")
+                    ),
                     "amount": float(amount),
                 }
             )
@@ -133,14 +137,16 @@ def create_category_pie_chart(summary: Dict[str, Any]) -> go.Figure:
     # Use category colors if available, otherwise let Plotly handle the colors
     colors = [item.get("color", None) for item in by_category]
     # Filter out None values
-    colors = colors if all(colors) else None
+    colors_list: List[Any] = []
+    if colors and all(colors):
+        colors_list = colors
 
     fig = go.Figure(
         go.Pie(
             labels=labels,
             values=values,
             # Use explicit colors if available
-            marker=dict(colors=colors) if colors else None,
+            marker=dict(colors=colors_list) if colors_list else None,
             textinfo="label+percent",
             hoverinfo="label+value",
             hole=0.4,
@@ -317,17 +323,14 @@ def create_income_vs_expenses_chart(
     return fig
 
 
-import loguru
-
-
 def create_split_expenses_summary(
-    split_expenses_df: pd.DataFrame, user_id: str, users_map: Dict[str, str]
+    split_expenses_df: pd.DataFrame, user_id: str | int, users_map: Dict[str, str]
 ) -> Dict[str, Any]:
     """Generate summary statistics for split expenses.
 
     Args:
         split_expenses_df (pd.DataFrame): DataFrame with split expenses
-        user_id (str): Current user ID
+        user_id (str | int): Current user ID
         users_map (Dict[str, str]): Map of user IDs to emails/names
 
     Returns:
@@ -342,10 +345,7 @@ def create_split_expenses_summary(
         }
 
     # Filter to shared expenses only
-    shared_df = split_expenses_df[split_expenses_df["is_shared"] == True].copy()
-
-    loguru.logger.info(split_expenses_df)
-    loguru.logger.info(shared_df)
+    shared_df = split_expenses_df[split_expenses_df["is_shared"]].copy()
 
     if shared_df.empty:
         return {
@@ -355,8 +355,17 @@ def create_split_expenses_summary(
             "by_user": [],
         }
 
-    # Calculate the per-person share for each expense
-    shared_df["per_person_amount"] = shared_df["amount"] / shared_df["split_count"]
+    # Get split details for these expenses
+    # Note: In the updated implementation, we now store individual split amounts
+    # in the expenses_split table. We'll use that if available, otherwise fall back
+    # to calculating based on split_count
+
+    # If split amounts aren't in the DataFrame, calculate them
+    if "split_amount" not in shared_df.columns:
+        # Calculate the per-person share for each expense
+        shared_df["per_person_amount"] = shared_df["amount"] / shared_df["split_count"]
+    else:
+        shared_df["per_person_amount"] = shared_df["split_amount"]
 
     # Total of all shared expenses
     total_shared = shared_df["amount"].sum()
@@ -381,7 +390,7 @@ def create_split_expenses_summary(
 
         # Find expenses where current user paid for this user
         current_paid_for_user = shared_df[
-            (shared_df["payer_id"] == user_id) & (shared_df["is_shared"] == True)
+            (shared_df["payer_id"] == user_id) & (shared_df["is_shared"])
         ]["per_person_amount"].sum()
 
         # Net balance
@@ -404,3 +413,48 @@ def create_split_expenses_summary(
         "total_owed": float(total_owed),
         "by_user": by_user,
     }
+
+
+def create_income_bar_chart(income_data: List[Dict[str, Any]]) -> go.Figure:
+    """Create a bar chart showing income by month.
+
+    Args:
+        income_data (List[Dict[str, Any]]): List of income records
+
+    Returns:
+        go.Figure: Plotly figure with income bar chart
+    """
+    if not income_data:
+        return go.Figure()
+
+    # Convert to DataFrame
+    df = pd.DataFrame(income_data)
+
+    # Convert month_date to datetime and sort chronologically
+    df["month_date"] = pd.to_datetime(df["month_date"])
+    df = df.sort_values("month_date")
+
+    # Format month labels
+    month_labels = df["month_date"].dt.strftime("%b %Y")
+
+    # Create bar chart
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=month_labels,
+            y=df["amount"],
+            name="Monthly Income",
+            marker_color="#2E7D32",  # Green color
+        )
+    )
+
+    fig.update_layout(
+        title="Monthly Income",
+        xaxis_title="Month",
+        yaxis_title="Amount",
+        template="plotly_white",
+        xaxis=dict(tickangle=-45),
+    )
+
+    return fig

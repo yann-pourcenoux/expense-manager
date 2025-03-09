@@ -49,6 +49,7 @@ class DatabaseManager:
         description: str = "",
         is_shared: bool = False,
         split_with_users: Optional[List[int]] = None,
+        beneficiary_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Create a new expense record.
 
@@ -64,6 +65,8 @@ class DatabaseManager:
                 Defaults to False.
             split_with_users (List[int] | None): List of user IDs to split with.
                 Defaults to None.
+            beneficiary_id (int | None): ID of the user who the expense is for.
+                When None and not shared, defaults to payer_id. Defaults to None.
 
         Returns:
             Dict[str, Any]: Response containing created expense or error
@@ -77,22 +80,26 @@ class DatabaseManager:
             except ValueError:
                 return {"error": f"Invalid category ID format: {category_id}"}
 
-            data = (
-                self.client.table(self.expenses_table)
-                .insert(
-                    {
-                        "reporter_id": user_id,  # int8 type
-                        "payer_id": payer_id,  # int8 type
-                        "amount": amount,
-                        "category_id": int_category_id,  # int8 type
-                        "date": date.isoformat(),
-                        "name": name,
-                        "description": description,
-                        "is_shared": is_shared,
-                    }
-                )
-                .execute()
-            )
+            # Set beneficiary_id to user_id if it's not provided and not shared
+            if beneficiary_id is None and not is_shared:
+                beneficiary_id = user_id
+
+            expense_data = {
+                "reporter_id": user_id,  # int8 type
+                "payer_id": payer_id,  # int8 type
+                "amount": amount,
+                "category_id": int_category_id,  # int8 type
+                "date": date.isoformat(),
+                "name": name,
+                "description": description,
+                "is_shared": is_shared,
+            }
+
+            # Add beneficiary_id if it's provided and not a shared expense
+            if beneficiary_id is not None and not is_shared:
+                expense_data["beneficiary_id"] = beneficiary_id
+
+            data = self.client.table(self.expenses_table).insert(expense_data).execute()
 
             if not data.data:
                 return {"error": "Failed to create expense"}
@@ -106,10 +113,17 @@ class DatabaseManager:
                 if user_id not in split_with_users:
                     split_with_users.append(user_id)
 
+                # Calculate per-person split amount (evenly distributed)
+                per_person_amount = round(amount / len(split_with_users), 2)
+
                 split_records = []
                 for split_user_id in split_with_users:
                     split_records.append(
-                        {"expense_id": expense_id, "user_id": split_user_id}
+                        {
+                            "expense_id": expense_id,
+                            "user_id": split_user_id,
+                            "amount": per_person_amount,
+                        }  # Store the split amount for each user
                     )
 
                 if split_records:
@@ -181,9 +195,10 @@ class DatabaseManager:
             # the split
             shared_expenses = []
             if include_shared:
+                # First get all expense splits for this user
                 shared_query = (
                     self.client.table("expenses_split")
-                    .select("expense_id")
+                    .select("*")  # Select all fields including amount
                     .eq("user_id", user_id)
                     .execute()
                 )
@@ -193,6 +208,12 @@ class DatabaseManager:
                     shared_expense_ids = [
                         item["expense_id"] for item in shared_query.data
                     ]
+
+                    # Create a map of expense_id to split amount
+                    split_amounts = {
+                        item["expense_id"]: item.get("amount", 0)
+                        for item in shared_query.data
+                    }
 
                     # Get the actual expense details
                     if shared_expense_ids:
@@ -215,12 +236,14 @@ class DatabaseManager:
 
                         if shared_expenses_data.data:
                             # Only add expenses where the user is not the reporter to
-                            # void duplicates
-                            shared_expenses = [
-                                exp
-                                for exp in shared_expenses_data.data
-                                if exp["reporter_id"] != user_id
-                            ]
+                            # avoid duplicates
+                            for exp in shared_expenses_data.data:
+                                if exp["reporter_id"] != user_id:
+                                    # Add the split amount to the expense record
+                                    exp["split_amount"] = split_amounts.get(
+                                        exp["id"], 0
+                                    )
+                                    shared_expenses.append(exp)
 
             # Combine direct and shared expenses
             all_expenses = (
@@ -235,7 +258,11 @@ class DatabaseManager:
             return {"error": str(e)}
 
     def update_expense(
-        self, expense_id: int, user_id: int, updates: Dict[str, Any]
+        self,
+        expense_id: int,
+        user_id: int,
+        updates: Dict[str, Any],
+        split_with_users: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
         """Update an existing expense record.
 
@@ -243,6 +270,8 @@ class DatabaseManager:
             expense_id (int): ID of the expense to update
             user_id (int): ID of the user who owns the expense
             updates (Dict[str, Any]): Dictionary of fields to update
+            split_with_users (List[int] | None): List of user IDs to split the
+                expense with. Only used if is_shared is true. Defaults to None.
 
         Returns:
             Dict[str, Any]: Dictionary containing updated expense or error
@@ -277,24 +306,36 @@ class DatabaseManager:
                     )
                 except ValueError:
                     return {
-                        "error": f"Invalid category ID format: {processed_updates['category_id']}"
+                        "error": (
+                            f"Invalid category ID format: "
+                            f"{processed_updates['category_id']}"
+                        )
                     }
 
             # Handle payer_id special case
             if "payer_id" in processed_updates and processed_updates["payer_id"] == 1:
                 processed_updates["payer_id"] = user_id
 
+            # Update the expense record
             data = (
                 self.client.table(self.expenses_table)
                 .update(processed_updates)
                 .eq("id", expense_id)
-                .eq("reporter_id", user_id)  # Using reporter_id instead of user_id
                 .execute()
             )
 
-            if data.data:
-                return {"expense": data.data[0]}
-            return {"error": "Failed to update expense"}
+            if not data.data:
+                return {"error": "Failed to update expense"}
+
+            # If the expense is shared and we have split_with_users, update the splits
+            is_shared = processed_updates.get(
+                "is_shared", expense_check.data[0].get("is_shared", False)
+            )
+            if is_shared and split_with_users is not None:
+                # Update the expense splits
+                self.update_expense_splits(expense_id, user_id, split_with_users)
+
+            return {"expense": data.data[0]}
 
         except Exception as e:
             return {"error": str(e)}
@@ -388,19 +429,24 @@ class DatabaseManager:
             expense_id (int): ID of the expense
 
         Returns:
-            Dict[str, Any]: Dictionary containing split user IDs or error
+            Dict[str, Any]: Dictionary containing split user IDs, amounts, or error
         """
         try:
             data = (
                 self.client.table("expenses_split")
-                .select("user_id")
+                .select("*")  # Select all fields to get amount also
                 .eq("expense_id", expense_id)
                 .execute()
             )
 
             if data.data is not None:
+                # Return both user IDs and their split amounts
                 user_ids = [item["user_id"] for item in data.data]
-                return {"user_ids": user_ids}
+                split_details = [
+                    {"user_id": item["user_id"], "amount": item.get("amount", 0)}
+                    for item in data.data
+                ]
+                return {"user_ids": user_ids, "split_details": split_details}
             return {"error": "Failed to fetch expense splits"}
 
         except Exception as e:
@@ -432,6 +478,9 @@ class DatabaseManager:
             if not expense_check.data:
                 return {"error": "Expense not found or unauthorized"}
 
+            # Get the expense amount for splitting
+            expense_amount = expense_check.data[0].get("amount", 0)
+
             # Delete existing splits
             delete_data = (
                 self.client.table("expenses_split")
@@ -447,11 +496,18 @@ class DatabaseManager:
                 if user_id not in split_with_users:
                     split_with_users.append(user_id)
 
+                # Calculate per-person split amount (evenly distributed)
+                per_person_amount = round(expense_amount / len(split_with_users), 2)
+
                 # Create new split records
                 split_records = []
                 for split_user_id in split_with_users:
                     split_records.append(
-                        {"expense_id": expense_id, "user_id": split_user_id}
+                        {
+                            "expense_id": expense_id,
+                            "user_id": split_user_id,
+                            "amount": per_person_amount,
+                        }  # Store the split amount for each user
                     )
 
                 if split_records:
@@ -492,9 +548,17 @@ class DatabaseManager:
                 )
             else:
                 # Ensure we're using the first day of the month
-                month_date = month_date.replace(
-                    day=1, hour=0, minute=0, second=0, microsecond=0
-                )
+                # Check if it's a date object (not datetime)
+                if hasattr(month_date, "hour"):
+                    # It's a datetime object
+                    month_date = month_date.replace(
+                        day=1, hour=0, minute=0, second=0, microsecond=0
+                    )
+                else:
+                    # It's a date object
+                    month_date = month_date.replace(day=1)
+                    # Convert to datetime for consistent handling
+                    month_date = datetime.combine(month_date, datetime.min.time())
 
             data = (
                 self.client.table("monthly_income")
@@ -532,9 +596,17 @@ class DatabaseManager:
                 )
             else:
                 # Ensure we're using the first day of the month
-                month_date = month_date.replace(
-                    day=1, hour=0, minute=0, second=0, microsecond=0
-                )
+                # Check if it's a date object (not datetime)
+                if hasattr(month_date, "hour"):
+                    # It's a datetime object
+                    month_date = month_date.replace(
+                        day=1, hour=0, minute=0, second=0, microsecond=0
+                    )
+                else:
+                    # It's a date object
+                    month_date = month_date.replace(day=1)
+                    # Convert to datetime for consistent handling
+                    month_date = datetime.combine(month_date, datetime.min.time())
 
             # Check if there's already an income record for this month
             existing_data = (
@@ -790,6 +862,162 @@ class DatabaseManager:
             if data.data is not None:
                 return {"profiles": data.data}
             return {"profiles": []}
+
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_user_balance(self, user_id: int) -> Dict[str, Any]:
+        """Calculate the balance between a user and all other users.
+
+        This helps track how much users owe each other based on shared expenses
+        and expenses where one user is the beneficiary but another is the payer.
+
+        Args:
+            user_id (int): ID of the user
+
+        Returns:
+            Dict[str, Any]: Dictionary containing balance information or error
+        """
+        try:
+            # Get all expenses where user is involved
+
+            # 1. Get expenses where user is the payer for someone else
+            paid_for_others_query = (
+                self.client.table(self.expenses_table)
+                .select("*")
+                .eq("payer_id", user_id)
+                .neq("beneficiary_id", user_id)
+                .eq("is_shared", False)
+                .execute()
+            )
+
+            # 2. Get expenses where someone else paid for the user
+            others_paid_query = (
+                self.client.table(self.expenses_table)
+                .select("*")
+                .eq("beneficiary_id", user_id)
+                .neq("payer_id", user_id)
+                .eq("is_shared", False)
+                .execute()
+            )
+
+            # 3. Get shared expenses where user is the payer
+            shared_paid_query = (
+                self.client.table(self.expenses_table)
+                .select("*")
+                .eq("payer_id", user_id)
+                .eq("is_shared", True)
+                .execute()
+            )
+
+            # 4. Get shared expenses where user participates but is not the payer
+            shared_query = (
+                self.client.table("expenses_split")
+                .select("expense_id, amount")
+                .eq("user_id", user_id)
+                .execute()
+            )
+
+            # Process the results to calculate balances
+            user_balances = {}
+
+            # Process paid for others
+            if paid_for_others_query.data:
+                for expense in paid_for_others_query.data:
+                    beneficiary_id = expense.get("beneficiary_id")
+                    if beneficiary_id:
+                        if beneficiary_id not in user_balances:
+                            user_balances[beneficiary_id] = {
+                                "owes_user": 0,
+                                "user_owes": 0,
+                            }
+                        user_balances[beneficiary_id]["owes_user"] += int(
+                            expense.get("amount", 0)
+                        )
+
+            # Process others paid for user
+            if others_paid_query.data:
+                for expense in others_paid_query.data:
+                    payer_id = expense.get("payer_id")
+                    if payer_id:
+                        if payer_id not in user_balances:
+                            user_balances[payer_id] = {"owes_user": 0, "user_owes": 0}
+                        user_balances[payer_id]["user_owes"] += int(
+                            expense.get("amount", 0)
+                        )
+
+            # Process shared expenses where user is the payer
+            if shared_paid_query.data:
+                for expense in shared_paid_query.data:
+                    expense_id = expense.get("id")
+                    if expense_id:
+                        # Get the splits for this expense
+                        splits_result = self.get_expense_splits(expense_id)
+                        if "split_details" in splits_result:
+                            for split in splits_result["split_details"]:
+                                split_user_id = split.get("user_id")
+                                if split_user_id and split_user_id != user_id:
+                                    if split_user_id not in user_balances:
+                                        user_balances[split_user_id] = {
+                                            "owes_user": 0,
+                                            "user_owes": 0,
+                                        }
+                                    # Other user owes their split amount to current user
+                                    user_balances[split_user_id]["owes_user"] += int(
+                                        split.get("amount", 0)
+                                    )
+
+            # Process shared expenses where user participates but is not the payer
+            shared_expense_ids = (
+                [item["expense_id"] for item in shared_query.data]
+                if shared_query.data
+                else []
+            )
+            if shared_expense_ids:
+                # Get the full expense details
+                in_query = (
+                    self.client.table(self.expenses_table)
+                    .select("*")
+                    .in_("id", shared_expense_ids)
+                    .execute()
+                )
+
+                if in_query.data:
+                    for expense in in_query.data:
+                        payer_id = expense.get("payer_id")
+                        if payer_id and payer_id != user_id:
+                            if payer_id not in user_balances:
+                                user_balances[payer_id] = {
+                                    "owes_user": 0,
+                                    "user_owes": 0,
+                                }
+                            # Find the user's split amount for this expense
+                            user_split_amount = 0
+                            for split in shared_query.data:
+                                if split["expense_id"] == expense["id"]:
+                                    user_split_amount = int(split.get("amount", 0))
+                                    break
+
+                            # Current user owes their split amount to the payer
+                            user_balances[payer_id]["user_owes"] += user_split_amount
+
+            # Create the final result
+            balance_list = []
+            for other_user_id, balance in user_balances.items():
+                net_balance = balance["owes_user"] - balance["user_owes"]
+                # Convert float values to int for consistency
+                balance["owes_user"] = int(balance["owes_user"])
+                balance["user_owes"] = int(balance["user_owes"])
+                balance_list.append(
+                    {
+                        "user_id": other_user_id,
+                        "owes_user": balance["owes_user"],
+                        "user_owes": balance["user_owes"],
+                        "net_balance": net_balance,
+                    }
+                )
+
+            return {"balances": balance_list}
 
         except Exception as e:
             return {"error": str(e)}

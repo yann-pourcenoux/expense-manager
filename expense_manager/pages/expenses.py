@@ -45,7 +45,7 @@ def display_expense_manager() -> None:
 
     # Display expenses interface
     st.subheader("Expenses")
-    tabs = st.tabs(["Add Expense", "View Expenses", "Split Expenses"])
+    tabs = st.tabs(["Add Expense", "View Expenses", "Split Expenses", "User Balances"])
 
     # Add Expense tab
     with tabs[0]:
@@ -58,6 +58,10 @@ def display_expense_manager() -> None:
     # Split Expenses tab
     with tabs[2]:
         display_split_expenses(db_manager, user_id)
+
+    # User Balances tab
+    with tabs[3]:
+        display_user_balances(db_manager, user_id)
 
 
 def display_add_expense_form(db_manager: DatabaseManager, user_id: str) -> None:
@@ -176,10 +180,34 @@ def display_add_expense_form(db_manager: DatabaseManager, user_id: str) -> None:
         # Expense sharing
         is_shared = st.checkbox("Split this expense with others")
 
+        # Beneficiary selection (only shown if expense is not shared)
+        beneficiary_id = None
+        if not is_shared:
+            # Create options for the beneficiary dropdown with display name
+            # (reusing payer_options)
+            beneficiary_option_list = (
+                list(payer_options.keys()) if payer_options else ["No users available"]
+            )
+
+            # Default to the current user for beneficiary (as is common)
+            beneficiary_default_index = default_index if current_user_option else 0
+
+            selected_beneficiary = st.selectbox(
+                "Beneficiary (who is this expense for?)",
+                options=beneficiary_option_list,
+                index=beneficiary_default_index,
+                help="Select who this expense is for (who benefits from it)",
+            )
+
+            # Get the beneficiary ID safely
+            if selected_beneficiary and selected_beneficiary in payer_options:
+                beneficiary_id = payer_options[selected_beneficiary]
+
         # If sharing is enabled, show user selection
         split_with_users = []
         if is_shared:
-            # Create user options for the multiselect (using the same user_details mapping)
+            # Create user options for the multiselect
+            # (using the same user_details mapping)
             split_user_options = {}
             for user_id_key, user_detail in user_details.items():
                 # Skip the current user as they'll be added automatically
@@ -221,15 +249,16 @@ def display_add_expense_form(db_manager: DatabaseManager, user_id: str) -> None:
 
             # Create expense record
             result = db_manager.create_expense(
-                user_id=user_id,
+                user_id=int(user_id),
                 amount=amount,
                 category_id=category_id,
                 date=expense_date,
                 name=name,
-                payer_id=payer_id,
+                payer_id=int(payer_id),
                 description=description,
                 is_shared=is_shared,
-                split_with_users=split_with_users,
+                split_with_users=split_with_users if is_shared else None,
+                beneficiary_id=beneficiary_id,
             )
 
             if "error" in result:
@@ -270,7 +299,10 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
 
     # Get all expenses for the user with date filtering
     expenses_result = db_manager.get_expenses(
-        user_id=user_id, start_date=start_datetime, end_date=end_datetime
+        int(user_id),
+        start_date=start_datetime,
+        end_date=end_datetime,
+        include_shared=True,
     )
     expenses = expenses_result.get("expenses", [])
 
@@ -354,7 +386,7 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
         with st.expander("Shared Expenses Analysis"):
             # Calculate splitting summaries
             split_summary = create_split_expenses_summary(
-                expenses_df, user_id, users_map
+                expenses_df, int(user_id), users_map
             )
 
             if split_summary["total_shared"] > 0:
@@ -380,7 +412,8 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
                                 st.write(f"**{user_balance['display_name']}**")
                             with cols[1]:
                                 st.write(
-                                    f"Paid for you: {format_currency(user_balance['paid_for_you'])}"
+                                    f"Paid for you: "
+                                    f"{format_currency(user_balance['paid_for_you'])}"
                                 )
                             with cols[2]:
                                 st.write(
@@ -421,6 +454,14 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
 
         if exp.get("is_shared", False):
             label += " (Shared)"
+        elif exp.get("beneficiary_id") and exp.get("beneficiary_id") != user_id:
+            # If expense has a beneficiary and it's not the current user, show it
+            beneficiary_name = users_map.get(exp.get("beneficiary_id"), "Unknown")
+            label += f" (For: {beneficiary_name})"
+        elif exp.get("payer_id") != user_id:
+            # If someone else paid for it, highlight that
+            payer_name = users_map.get(exp.get("payer_id"), "Unknown")
+            label += f" (Paid by: {payer_name})"
 
         expense_options[label] = exp["id"]
 
@@ -447,7 +488,9 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
             if st.button(
                 "Delete Expense", type="primary", help="This action cannot be undone"
             ):
-                result = db_manager.delete_expense(selected_expense_id, user_id)
+                result = db_manager.delete_expense(
+                    expense_id=selected_expense_id, user_id=int(user_id)
+                )
                 if "error" in result:
                     st.error(f"Error deleting expense: {result['error']}")
                 else:
@@ -551,6 +594,46 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
                 # Use current payer ID as fallback if there's an issue
                 payer_id = current_payer_id
 
+            # Beneficiary selection (only shown if expense is not shared)
+            beneficiary_id = None
+            is_shared = editing_expense.get("is_shared", False)
+            if not is_shared:
+                # Get current beneficiary ID if any
+                current_beneficiary_id = editing_expense.get("beneficiary_id", payer_id)
+
+                # Find the display option for current beneficiary
+                current_beneficiary_option = next(
+                    (
+                        option
+                        for option, id_value in payer_options.items()
+                        if id_value == current_beneficiary_id
+                    ),
+                    None,
+                )
+
+                # Default index for beneficiary dropdown
+                beneficiary_default_index = 0
+                if current_beneficiary_option:
+                    beneficiary_default_index = list(payer_options.keys()).index(
+                        current_beneficiary_option
+                    )
+
+                selected_beneficiary = st.selectbox(
+                    "Beneficiary (who is this expense for?)",
+                    options=payer_option_list,
+                    index=beneficiary_default_index
+                    if beneficiary_default_index < len(payer_option_list)
+                    else 0,
+                    help="Select who this expense is for (who benefits from it)",
+                )
+
+                # Get the beneficiary ID safely
+                if selected_beneficiary and selected_beneficiary in payer_options:
+                    beneficiary_id = payer_options[selected_beneficiary]
+                else:
+                    # Use current user as fallback if there's an issue
+                    beneficiary_id = current_beneficiary_id
+
             # Description
             description = st.text_area(
                 "Description (Optional)", editing_expense.get("description", "")
@@ -581,11 +664,13 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
                 # Get current split users if any
                 if editing_expense.get("is_shared", False):
                     split_result = db_manager.get_expense_splits(editing_expense["id"])
-                    current_split_users = split_result.get("user_ids", [])
+                    # We'll use the split result later, we don't need to store it
+                    # in a variable here
                 else:
-                    current_split_users = []
+                    pass  # No split users for non-shared expenses
 
-                # Create user options for the multiselect (using the same user_details mapping)
+                # Create user options for the multiselect
+                # (using the same user_details mapping)
                 split_user_options = {}
                 for user_id_key, user_detail in user_details.items():
                     # Skip the current user as they'll be added automatically
@@ -620,7 +705,7 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
                 # Convert date input to datetime
                 expense_date = datetime.combine(date, datetime.min.time())
 
-                # Create update data
+                # Update expense fields
                 updates = {
                     "amount": amount,
                     "category_id": category_id,
@@ -631,16 +716,16 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
                     "is_shared": is_shared,
                 }
 
-                # Validate required fields before submitting
-                if not name:
-                    st.error("Please provide a name for the expense.")
-                    st.stop()
+                # Add beneficiary_id if it's not a shared expense
+                if not is_shared and beneficiary_id is not None:
+                    updates["beneficiary_id"] = beneficiary_id
 
-                # Update expense record
+                # Update expense
                 result = db_manager.update_expense(
-                    expense_id=st.session_state.editing_expense_id,
-                    user_id=user_id,
+                    expense_id=selected_expense_id,
+                    user_id=int(user_id),
                     updates=updates,
+                    split_with_users=split_with_users if is_shared else None,
                 )
 
                 if "error" in result:
@@ -652,9 +737,9 @@ def display_expense_list(db_manager: DatabaseManager, user_id: str) -> None:
                     if is_shared:
                         # Update the splits
                         split_result = db_manager.update_expense_splits(
-                            st.session_state.editing_expense_id,
-                            user_id,
-                            split_with_users,
+                            expense_id=selected_expense_id,
+                            user_id=int(user_id),
+                            split_with_users=split_with_users,
                         )
 
                         if "error" in split_result:
@@ -679,7 +764,10 @@ def display_split_expenses(db_manager: DatabaseManager, user_id: str) -> None:
     st.header("Split Expenses")
 
     # Get all shared expenses for the user
-    expenses_result = db_manager.get_expenses(user_id=user_id, include_shared=True)
+    expenses_result = db_manager.get_expenses(
+        int(user_id),
+        include_shared=True,
+    )
     expenses = expenses_result.get("expenses", [])
 
     # Filter to only shared expenses
@@ -715,7 +803,7 @@ def display_split_expenses(db_manager: DatabaseManager, user_id: str) -> None:
         expenses_df["split_count"] = expenses_df["id"].map(split_counts)
 
     # Calculate splitting summaries
-    split_summary = create_split_expenses_summary(expenses_df, user_id, users_map)
+    split_summary = create_split_expenses_summary(expenses_df, int(user_id), users_map)
 
     # Display summary metrics
     st.subheader("Split Expenses Summary")
@@ -743,7 +831,8 @@ def display_split_expenses(db_manager: DatabaseManager, user_id: str) -> None:
                     )
                 with cols[2]:
                     st.write(
-                        f"You paid: {format_currency(user_balance['you_paid_for_them'])}"
+                        f"You paid: "
+                        f"{format_currency(user_balance['you_paid_for_them'])}"
                     )
                 with cols[3]:
                     net = user_balance["net_balance"]
@@ -798,3 +887,79 @@ def display_split_expenses(db_manager: DatabaseManager, user_id: str) -> None:
 
     # Display the expenses
     st.dataframe(display_df[display_columns], use_container_width=True)
+
+
+def display_user_balances(db_manager: DatabaseManager, user_id: str) -> None:
+    """Display balances between the current user and others.
+
+    Shows how much the current user owes other users and how much others owe them,
+    including both shared expenses and direct payments.
+
+    Args:
+        db_manager (DatabaseManager): Database manager instance
+        user_id (str): ID of the current user
+    """
+    st.header("User Balances")
+
+    # Get detailed balance information
+    result = db_manager.get_user_balance(int(user_id))
+
+    if "error" in result:
+        st.error(f"Error retrieving balances: {result['error']}")
+        return
+
+    balances = result.get("balances", [])
+
+    if not balances:
+        st.info("No outstanding balances found.")
+        return
+
+    # Get all profiles for display
+    profiles_result = db_manager.get_all_profiles()
+    profiles = profiles_result.get("profiles", [])
+    users_map = {str(u["id"]): u["display_name"] for u in profiles}
+
+    # Display summary metrics
+    total_owed_to_user = sum(balance["owes_user"] for balance in balances)
+    total_user_owes = sum(balance["user_owes"] for balance in balances)
+    net_balance = total_owed_to_user - total_user_owes
+
+    st.subheader("Summary")
+    cols = st.columns(3)
+    with cols[0]:
+        st.metric("Others Owe You", format_currency(total_owed_to_user))
+    with cols[1]:
+        st.metric("You Owe Others", format_currency(total_user_owes))
+    with cols[2]:
+        balance_label = "Net Balance"
+        if net_balance > 0:
+            balance_value = f"🟢 +{format_currency(net_balance)}"
+        elif net_balance < 0:
+            balance_value = f"🔴 -{format_currency(abs(net_balance))}"
+        else:
+            balance_value = "✓ Settled"
+        st.metric(balance_label, balance_value)
+
+    # Display individual balances
+    st.subheader("Individual Balances")
+
+    for balance in balances:
+        other_user_id = str(balance["user_id"])
+        display_name = users_map.get(other_user_id, f"User {other_user_id}")
+        net = balance["net_balance"]
+
+        with st.container(border=True):
+            cols = st.columns([3, 2, 2, 2])
+            with cols[0]:
+                st.write(f"**{display_name}**")
+            with cols[1]:
+                st.write(f"Owes you: {format_currency(balance['owes_user'])}")
+            with cols[2]:
+                st.write(f"You owe: {format_currency(balance['user_owes'])}")
+            with cols[3]:
+                if net > 0:
+                    st.write(f"🟢 Owes you: {format_currency(abs(net))}")
+                elif net < 0:
+                    st.write(f"🔴 You owe: {format_currency(abs(net))}")
+                else:
+                    st.write("✅ Settled")

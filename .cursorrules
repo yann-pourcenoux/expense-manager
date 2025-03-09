@@ -1,6 +1,5 @@
 {
   "projectDescription": "A Streamlit-based Expense Manager application that helps users track and visualize their expenses. The application uses Supabase as the backend database and provides authentication, expense tracking, analytics features, expense splitting, and income tracking.",
-
   "technology": {
     "frontend": "Streamlit",
     "backend": "Python",
@@ -15,7 +14,6 @@
       "python-dotenv"
     ]
   },
-
   "codeStyle": {
     "python": {
       "docstringFormat": "Google",
@@ -24,7 +22,6 @@
       "optionalTypeStyle": "type | None"
     }
   },
-
   "projectStructure": {
     "mainApp": "expense_manager/app.py",
     "modules": {
@@ -34,7 +31,6 @@
       "utils": "Utility functions and models"
     }
   },
-
   "databaseSchema": {
     "tables": {
       "auth.users": {
@@ -74,7 +70,8 @@
           "is_shared": "bool",
           "amount": "numeric",
           "description": "text",
-          "name": "text"
+          "name": "text",
+          "beneficiary_id": "int8 (foreign key to profiles.id)"
         },
         "description": "Stores expense records including reporter, payer, and whether expenses are shared"
       },
@@ -148,10 +145,16 @@
         "from": "profiles.id",
         "to": "monthly_income.user_id",
         "description": "One user can have many monthly income records"
+      },
+      {
+        "name": "expense_beneficiary",
+        "type": "one-to-many",
+        "from": "profiles.id",
+        "to": "expenses.beneficiary_id",
+        "description": "One user can be the beneficiary of many expenses"
       }
     ]
   },
-
   "models": {
     "Expense": "Complete expense record with ID and metadata",
     "ExpenseCreate": "Data required to create a new expense",
@@ -163,7 +166,6 @@
     "MonthlyIncome": "Monthly income record for a user",
     "ExpenseSummary": "Aggregated expense data for analytics"
   },
-
   "features": {
     "authentication": "User signup and login",
     "expenseTracking": "Add, edit, delete, and view expenses",
