@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-run_app = "expense_manager.cli:run_app"
+run = "expense_manager.cli:run_app"
 
 [project.optional-dependencies]
 dev = [
