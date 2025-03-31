@@ -8,33 +8,42 @@ version = "0.1.0"
 description = "A simple interface to get insights from expenses"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "MIT"}
+license = { text = "MIT" }
 dependencies = [
     "streamlit>=1.27.0",
     "supabase>=1.0.3",
     "python-dotenv>=1.0.0",
     "pandas>=2.0.0",
     "plotly>=5.14.0",
-    "pydantic>=2.0.0",
+    "pydantic[email]>=2.0.0",
+    "email-validator>=2.0.0",
 ]
+
+[project.scripts]
+run = "expense_manager.cli:run_app"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
+    "ruff>=0.9.9",
     "mypy>=1.0.0",
-    "flake8>=6.0.0",
     "pre-commit>=3.0.0",
+    "loguru>=0.7.3",
 ]
 
-[tool.black]
+[tool.ruff]
+target-version = "py312"
 line-length = 88
-target-version = ["py312"]
+select = ["E", "F", "I", "D"] # Error, Flake8, Import sorting, Docstrings
+ignore = []
 
-[tool.isort]
-profile = "black"
-line_length = 88
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.mypy]
 python_version = "3.12"
