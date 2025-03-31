@@ -1,47 +1,144 @@
-"""Database manager for interacting with Supabase database.
+"""Database manager for interacting with SQLite database.
 
-This module handles all interactions with the Supabase database for expense data,
+This module handles all interactions with the SQLite database for expense data,
 including creating, reading, updating, and deleting expenses.
 """
 
 import os
+import sqlite3
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from supabase import Client, create_client
+from sqlite_utils import Database
 
 # Load environment variables
 load_dotenv()
 
 
 class DatabaseManager:
-    """Manager for Supabase database operations.
+    """Manager for SQLite database operations.
 
     This class handles all database operations related to expenses, including
     creating, reading, updating, and deleting expense records.
     """
 
     def __init__(self) -> None:
-        """Initialize Supabase client with environment variables."""
-        self.supabase_url = os.getenv("SUPABASE_URL")
-        self.supabase_key = os.getenv("SUPABASE_KEY")
+        """Initialize SQLite database connection and create tables if needed."""
+        db_path = os.getenv("SQLITE_DB_PATH", "expense_manager.db")
 
-        if not self.supabase_url or not self.supabase_key:
-            raise ValueError(
-                "Supabase credentials not found. Please set SUPABASE_URL and "
-                "SUPABASE_KEY environment variables."
-            )
+        # Create directory for database if it doesn't exist
+        db_file = Path(db_path)
+        db_file.parent.mkdir(parents=True, exist_ok=True)
 
-        self.client: Client = create_client(self.supabase_url, self.supabase_key)
+        self.db = Database(db_path)
+
+        # Table names
         self.expenses_table = "expenses"
         self.categories_table = "categories"
         self.profiles_table = "profiles"
+        self.expenses_split_table = "expenses_split"
+        self.monthly_income_table = "monthly_income"
+        self.users_table = "users"
 
-        # Assert that there are only two users
-        assert (
-            len(self.client.table(self.profiles_table).select("*").execute().data) == 2
-        ), "This works only with two users in the household."
+        # Create tables if they don't exist
+        self._create_tables()
+
+    def _create_tables(self) -> None:
+        """Create database tables if they don't exist."""
+        # Create users table
+        if self.users_table not in self.db.table_names():
+            self.db.create_table(
+                self.users_table,
+                {
+                    "id": str,
+                    "email": str,
+                    "password_hash": str,
+                    "created_at": str,
+                },
+                pk="id",
+            )
+            self.db[self.users_table].create_index(["email"], unique=True)
+
+        # Create profiles table
+        if self.profiles_table not in self.db.table_names():
+            self.db.create_table(
+                self.profiles_table,
+                {
+                    "id": int,
+                    "user_id": str,
+                    "display_name": str,
+                    "created_at": str,
+                },
+                pk="id",
+            )
+            self.db[self.profiles_table].create_index(["user_id"], unique=True)
+
+        # Create categories table
+        if self.categories_table not in self.db.table_names():
+            self.db.create_table(
+                self.categories_table,
+                {
+                    "id": int,
+                    "name": str,
+                    "description": str,
+                    "created_at": str,
+                },
+                pk="id",
+            )
+
+        # Create expenses table
+        if self.expenses_table not in self.db.table_names():
+            self.db.create_table(
+                self.expenses_table,
+                {
+                    "id": int,
+                    "reporter_id": int,
+                    "payer_id": int,
+                    "beneficiary_id": int,
+                    "amount": float,
+                    "category_id": int,
+                    "date": str,
+                    "name": str,
+                    "description": str,
+                    "is_shared": int,  # SQLite doesn't have bool, use int (0/1)
+                    "created_at": str,
+                },
+                pk="id",
+            )
+
+        # Create expenses_split table
+        if self.expenses_split_table not in self.db.table_names():
+            self.db.create_table(
+                self.expenses_split_table,
+                {
+                    "id": int,
+                    "expense_id": int,
+                    "user_id": int,
+                    "amount": float,
+                    "created_at": str,
+                },
+                pk="id",
+            )
+            self.db[self.expenses_split_table].create_index(["expense_id", "user_id"])
+
+        # Create monthly_income table
+        if self.monthly_income_table not in self.db.table_names():
+            self.db.create_table(
+                self.monthly_income_table,
+                {
+                    "id": int,
+                    "user_id": int,
+                    "amount": float,
+                    "month_date": str,
+                    "created_at": str,
+                },
+                pk="id",
+            )
+            self.db[self.monthly_income_table].create_index(
+                ["user_id", "month_date"], unique=True
+            )
 
     def add_expense(
         self,
@@ -65,39 +162,42 @@ class DatabaseManager:
             "date": date.isoformat(),
             "name": name,
             "description": description,
-            "is_shared": is_shared,
+            "is_shared": 1 if is_shared else 0,
             "beneficiary_id": beneficiary_id,
+            "created_at": datetime.now().isoformat(),
         }
 
-        data = self.client.table(self.expenses_table).insert(expense_data).execute()
+        expense_id = self.db[self.expenses_table].insert(expense_data).last_pk
 
-        if not data.data:
+        # Get the created expense
+        expense = self.db[self.expenses_table].get(expense_id)
+
+        if not expense:
             raise Exception("Failed to create expense")
-
-        expense = data.data[0]
-        expense_id = expense["id"]
 
         # 2. Create the record in the split table
         if not is_shared:
             split_with_users = [beneficiary_id]
         else:
             # Select all profiles
-            split_with_users = [
-                profile["id"] for profile in self.get_all_profiles()["profiles"]
-            ]
+            profiles = self.get_all_profiles()["profiles"]
+            split_with_users = [profile["id"] for profile in profiles]
 
-        expense_split_data = [
-            {
-                "expense_id": expense_id,
-                "user_id": user_id,
-                "amount": amount / len(split_with_users),
-            }
-            for user_id in split_with_users
-        ]
+        expense_split_data = []
+        for user_id in split_with_users:
+            if user_id is not None:  # Skip None values
+                expense_split_data.append(
+                    {
+                        "expense_id": expense_id,
+                        "user_id": user_id,
+                        "amount": amount / len(split_with_users),
+                        "created_at": datetime.now().isoformat(),
+                    }
+                )
+
         for expense_split in expense_split_data:
-            data = self.client.table("expenses_split").insert(expense_split).execute()
-            if not data.data:
-                raise Exception("Failed to create expense split")
+            self.db[self.expenses_split_table].insert(expense_split)
+
         return expense
 
     def get_expenses_for_balance(self) -> list[dict]:
@@ -107,15 +207,14 @@ class DatabaseManager:
             list[dict]: List of expenses that are either shared or have
                 different payer and beneficiary
         """
-        expenses = self.client.table(self.expenses_table).select("*").execute()
+        expenses = list(self.db[self.expenses_table].rows)
 
-        if expenses.data is not None:
-            expenses = [
-                expense
-                for expense in expenses.data
-                if expense["is_shared"]
-                or expense["payer_id"] != expense["beneficiary_id"]
-            ]
+        # Filter expenses that are either shared or have different payer and beneficiary
+        expenses = [
+            expense
+            for expense in expenses
+            if expense["is_shared"] or expense["payer_id"] != expense["beneficiary_id"]
+        ]
 
         return expenses
 
@@ -140,61 +239,42 @@ class DatabaseManager:
         Returns:
             list[dict]: List of expenses matching the criteria
         """
-        # Select the expenses that:
-        # - are shared
-        # - the user is the payer
-        # - the user is the beneficiary
-        shared_expenses = (
-            self.client.table(self.expenses_table).select("*").eq("is_shared", True)
-        )
+        # Build the query conditions
+        where_clauses = []
+        params = {}
 
-        payer_expenses = (
-            self.client.table(self.expenses_table).select("*").eq("payer_id", user_id)
+        # User is involved in expense (shared, payer, or beneficiary)
+        where_clauses.append(
+            "(is_shared = 1 OR payer_id = :user_id OR beneficiary_id = :user_id)"
         )
+        params["user_id"] = user_id
 
-        beneficiary_expenses = (
-            self.client.table(self.expenses_table)
-            .select("*")
-            .eq("beneficiary_id", user_id)
-        )
-
-        # Apply common filters to each query
         if start_date is not None:
-            shared_expenses = shared_expenses.gte("date", start_date.isoformat())
-            payer_expenses = payer_expenses.gte("date", start_date.isoformat())
-            beneficiary_expenses = beneficiary_expenses.gte(
-                "date", start_date.isoformat()
-            )
+            where_clauses.append("date >= :start_date")
+            params["start_date"] = start_date.isoformat()
 
         if end_date is not None:
-            shared_expenses = shared_expenses.lte("date", end_date.isoformat())
-            payer_expenses = payer_expenses.lte("date", end_date.isoformat())
-            beneficiary_expenses = beneficiary_expenses.lte(
-                "date", end_date.isoformat()
-            )
+            where_clauses.append("date <= :end_date")
+            params["end_date"] = end_date.isoformat()
 
         if category_id is not None:
-            shared_expenses = shared_expenses.eq("category_id", category_id)
-            payer_expenses = payer_expenses.eq("category_id", category_id)
-            beneficiary_expenses = beneficiary_expenses.eq("category_id", category_id)
+            where_clauses.append("category_id = :category_id")
+            params["category_id"] = category_id
 
-        # Execute the queries
-        shared_result = shared_expenses.execute()
-        payer_result = payer_expenses.execute()
-        beneficiary_result = beneficiary_expenses.execute()
+        where_clause = " AND ".join(where_clauses)
 
-        # Combine and deduplicate results
-        all_expenses = []
-        expense_ids = set()
+        # Execute the query
+        conn = self.db.conn
+        query = f"SELECT * FROM {self.expenses_table} WHERE {where_clause}"
 
-        for result in [shared_result, payer_result, beneficiary_result]:
-            if result.data:
-                for expense in result.data:
-                    if expense["id"] not in expense_ids:
-                        all_expenses.append(expense)
-                        expense_ids.add(expense["id"])
+        cursor = conn.execute(query, params)
+        rows = cursor.fetchall()
 
-        return all_expenses
+        # Convert to dictionaries
+        column_names = [desc[0] for desc in cursor.description]
+        expenses = [dict(zip(column_names, row)) for row in rows]
+
+        return expenses
 
     def update_expense(
         self,
@@ -203,690 +283,414 @@ class DatabaseManager:
         updates: Dict[str, Any],
         split_with_users: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
-        """Update an existing expense record.
+        """Update an existing expense."""
+        # Check if expense exists and user is allowed to update it
+        expense = self.db[self.expenses_table].get(expense_id)
 
-        Args:
-            expense_id (int): ID of the expense to update
-            user_id (int): ID of the user making the update
-            updates (Dict[str, Any]): Dictionary of fields to update
-            split_with_users (List[int] | None): List of user IDs to split the
-                expense with. Only used if is_shared is true. Defaults to None.
-
-        Returns:
-            Dict[str, Any]: Dictionary containing updated expense or error
-        """
-        # Get the expense to update
-        expense_check = (
-            self.client.table(self.expenses_table)
-            .select("*")
-            .eq("id", expense_id)
-            .execute()
-        )
-
-        if not expense_check.data:
+        if not expense:
             return {"error": "Expense not found"}
 
-        # Process updates to ensure correct data types
-        processed_updates = updates.copy()
+        if expense["reporter_id"] != user_id:
+            return {"error": "You can only update expenses you created"}
 
-        # If date is in updates and is a datetime, convert to string
-        if "date" in processed_updates and isinstance(
-            processed_updates["date"], datetime
-        ):
-            processed_updates["date"] = processed_updates["date"].isoformat()
+        # Update expense fields
+        update_data = {}
+        allowed_fields = [
+            "payer_id",
+            "beneficiary_id",
+            "amount",
+            "category_id",
+            "date",
+            "name",
+            "description",
+            "is_shared",
+        ]
 
-        # If category_id is in updates, convert to integer
-        if "category_id" in processed_updates:
-            try:
-                processed_updates["category_id"] = int(processed_updates["category_id"])
-            except ValueError:
-                return {
-                    "error": (
-                        f"Invalid category ID format: "
-                        f"{processed_updates['category_id']}"
-                    )
-                }
+        for field in allowed_fields:
+            if field in updates:
+                # Convert boolean to integer for is_shared
+                if field == "is_shared" and isinstance(updates[field], bool):
+                    update_data[field] = 1 if updates[field] else 0
+                else:
+                    update_data[field] = updates[field]
 
-        # Handle payer_id special case
-        if "payer_id" in processed_updates and processed_updates["payer_id"] == 1:
-            processed_updates["payer_id"] = user_id
+        if update_data:
+            self.db[self.expenses_table].update(expense_id, update_data)
 
-        # Update the expense record
-        data = (
-            self.client.table(self.expenses_table)
-            .update(processed_updates)
-            .eq("id", expense_id)
-            .execute()
-        )
+        # Update expense_splits if requested
+        if split_with_users is not None:
+            if updates.get("is_shared", expense["is_shared"]):
+                # If shared expense, split among all users
+                all_profiles = self.get_all_profiles()["profiles"]
+                split_with_users = [profile["id"] for profile in all_profiles]
 
-        if not data.data:
-            return {"error": "Failed to update expense"}
-
-        # If the expense is shared and we have split_with_users, update the splits
-        is_shared = processed_updates.get(
-            "is_shared", expense_check.data[0].get("is_shared", False)
-        )
-        if is_shared and split_with_users is not None:
-            # Update the expense splits
             self.update_expense_splits(expense_id, user_id, split_with_users)
 
-        return {"expense": data.data[0]}
+        # Return updated expense
+        updated_expense = self.db[self.expenses_table].get(expense_id)
+        return {"expense": updated_expense}
 
     def delete_expense(self, expense_id: int, user_id: int) -> Dict[str, Any]:
-        """Delete an expense record.
+        """Delete an expense and its splits."""
+        # Check if expense exists and user is allowed to delete it
+        expense = self.db[self.expenses_table].get(expense_id)
 
-        Args:
-            expense_id (int): ID of the expense to delete
-            user_id (int): ID of the user making the deletion
-
-        Returns:
-            Dict[str, Any]: Dictionary containing result or error
-        """
-        # Get expense to delete
-        expense_check = (
-            self.client.table(self.expenses_table)
-            .select("*")
-            .eq("id", expense_id)
-            .execute()
-        )
-
-        if not expense_check.data:
+        if not expense:
             return {"error": "Expense not found"}
 
-        # Delete the expense
-        data = (
-            self.client.table(self.expenses_table)
-            .delete()
-            .eq("id", expense_id)
-            .execute()
+        if expense["reporter_id"] != user_id:
+            return {"error": "You can only delete expenses you created"}
+
+        # Delete expense splits first
+        self.db.execute(
+            f"DELETE FROM {self.expenses_split_table} WHERE expense_id = ?",
+            [expense_id],
         )
 
-        if data.data:
-            # Also delete any splits associated with this expense
-            self.client.table("expenses_split").delete().eq(
-                "expense_id", expense_id
-            ).execute()
-            return {"success": True, "message": "Expense deleted successfully"}
+        # Delete the expense
+        self.db[self.expenses_table].delete(expense_id)
 
-        return {"error": "Failed to delete expense"}
+        return {"success": True}
 
     def get_categories(self) -> Dict[str, Any]:
-        """Get all available expense categories.
+        """Get all expense categories."""
+        categories = list(self.db[self.categories_table].rows)
+        return {"categories": categories}
 
-        Returns:
-            Dict[str, Any]: Dictionary containing categories or error
-        """
-        data = self.client.table(self.categories_table).select("*").execute()
+    def create_category(self, name: str, description: str = "") -> Dict[str, Any]:
+        """Create a new expense category."""
+        category_data = {
+            "name": name,
+            "description": description,
+            "created_at": datetime.now().isoformat(),
+        }
 
-        if data.data is not None:
-            return {"categories": data.data}
-        return {"error": "Failed to fetch categories"}
+        category_id = self.db[self.categories_table].insert(category_data).last_pk
+        category = self.db[self.categories_table].get(category_id)
 
-    def create_category(self, name: str, color: str | None = None) -> Dict[str, Any]:
-        """Create a new expense category.
+        if not category:
+            return {"error": "Failed to create category"}
 
-        Args:
-            name (str): Name of the category
-            color (str | None, optional): Color for the category. Defaults to None.
-                If None, no color will be assigned in the database.
-
-        Returns:
-            Dict[str, Any]: Dictionary containing created category or error
-        """
-        category_data = {"name": name}
-        # Only include color if specified
-        if color:
-            category_data["color"] = color
-
-        data = self.client.table(self.categories_table).insert(category_data).execute()
-
-        if data.data:
-            return {"category": data.data[0]}
-        return {"error": "Failed to create category"}
+        return {"category": category}
 
     def get_expense_splits(self, expense_id: int) -> Dict[str, Any]:
-        """Get all users who are part of an expense split.
+        """Get all splits for a specific expense."""
+        conn = self.db.conn
 
-        Args:
-            expense_id (int): ID of the expense
-
-        Returns:
-            Dict[str, Any]: Dictionary containing split user IDs, amounts, or error
+        query = f"""
+        SELECT es.*, p.display_name
+        FROM {self.expenses_split_table} es
+        JOIN {self.profiles_table} p ON es.user_id = p.id
+        WHERE es.expense_id = ?
         """
-        data = (
-            self.client.table("expenses_split")
-            .select("*")  # Select all fields to get amount also
-            .eq("expense_id", expense_id)
-            .execute()
-        )
 
-        if data.data is not None:
-            # Return both user IDs and their split amounts
-            user_ids = [item["user_id"] for item in data.data]
-            split_details = [
-                {"user_id": item["user_id"], "amount": item.get("amount", 0)}
-                for item in data.data
-            ]
-            return {"user_ids": user_ids, "split_details": split_details}
-        return {"error": "Failed to fetch expense splits"}
+        cursor = conn.execute(query, [expense_id])
+        rows = cursor.fetchall()
+
+        # Convert to dictionaries
+        column_names = [desc[0] for desc in cursor.description]
+        splits = [dict(zip(column_names, row)) for row in rows]
+
+        return {"splits": splits}
+
+    def get_shared_expenses_for_dashboard(
+        self, start_date: str, end_date: str
+    ) -> Dict[str, Any]:
+        """Get shared expenses for the dashboard."""
+        conn = self.db.conn
+        query = (
+            f"SELECT * FROM {self.expenses_table} "
+            f"WHERE is_shared = 1 "
+            f"AND date >= :start_date AND date <= :end_date"
+        )
+        cursor = conn.execute(query, {"start_date": start_date, "end_date": end_date})
+        rows = cursor.fetchall()
+
+        return {"expenses": rows}
 
     def update_expense_splits(
         self, expense_id: int, user_id: int, split_with_users: List[int]
     ) -> Dict[str, Any]:
-        """Update the users who are part of an expense split.
+        """Update the splits for an expense."""
+        # Check if expense exists and user is allowed to update it
+        expense = self.db[self.expenses_table].get(expense_id)
 
-        Args:
-            expense_id (int): ID of the expense
-            user_id (int): ID of the user making the update
-            split_with_users (List[int]): List of user IDs to split with
-
-        Returns:
-            Dict[str, Any]: Dictionary containing result or error
-        """
-        # Get the expense to update
-        expense_check = (
-            self.client.table(self.expenses_table)
-            .select("*")
-            .eq("id", expense_id)
-            .execute()
-        )
-
-        if not expense_check.data:
+        if not expense:
             return {"error": "Expense not found"}
 
-        # Get the expense amount for splitting
-        expense_amount = expense_check.data[0].get("amount", 0)
+        if expense["reporter_id"] != user_id:
+            return {"error": "You can only update expenses you created"}
 
         # Delete existing splits
-        delete_data = (
-            self.client.table("expenses_split")
-            .delete()
-            .eq("expense_id", expense_id)
-            .execute()
+        self.db.execute(
+            f"DELETE FROM {self.expenses_split_table} WHERE expense_id = ?",
+            [expense_id],
         )
 
-        # Only continue if deletion was successful or there were no records
-        # to delete
-        if delete_data.data is not None or not delete_data.data:
-            # Add the expense creator to the split as well
-            if user_id not in split_with_users:
-                split_with_users.append(user_id)
+        # Create new splits
+        amount_per_user = expense["amount"] / len(split_with_users)
 
-            # Calculate per-person split amount (evenly distributed)
-            per_person_amount = round(expense_amount / len(split_with_users), 2)
+        for split_user_id in split_with_users:
+            split_data = {
+                "expense_id": expense_id,
+                "user_id": split_user_id,
+                "amount": amount_per_user,
+                "created_at": datetime.now().isoformat(),
+            }
+            self.db[self.expenses_split_table].insert(split_data)
 
-            # Create new split records
-            split_records = []
-            for split_user_id in split_with_users:
-                split_records.append(
-                    {
-                        "expense_id": expense_id,
-                        "user_id": split_user_id,
-                        "amount": per_person_amount,
-                    }  # Store the split amount for each user
-                )
-
-            if split_records:
-                insert_data = (
-                    self.client.table("expenses_split").insert(split_records).execute()
-                )
-
-                if insert_data.data:
-                    return {
-                        "success": True,
-                        "message": "Expense splits updated successfully",
-                    }
-
-        return {"error": "Failed to update expense splits"}
+        return {"success": True}
 
     def get_monthly_income(
         self, user_id: int, month_date: Optional[datetime] = None
     ) -> Dict[str, Any]:
-        """Get monthly income for a user.
+        """Get the monthly income for a user for a specific month."""
+        if month_date is None:
+            month_date = datetime.now()
 
-        Args:
-            user_id (int): ID of the user
-            month_date (datetime | None, optional): Month to get income for.
-                Defaults to current month.
+        # Format as YYYY-MM-01 for consistent monthly comparisons
+        month_string = month_date.strftime("%Y-%m-01")
 
-        Returns:
-            Dict[str, Any]: Dictionary containing income record or error
+        conn = self.db.conn
+        query = f"""
+        SELECT * FROM {self.monthly_income_table}
+        WHERE user_id = ? AND month_date = ?
         """
-        if not month_date:
-            month_date = datetime.now().replace(
-                day=1, hour=0, minute=0, second=0, microsecond=0
-            )
+
+        cursor = conn.execute(query, [user_id, month_string])
+        row = cursor.fetchone()
+
+        if row:
+            # Convert to dictionary
+            column_names = [desc[0] for desc in cursor.description]
+            income = dict(zip(column_names, row))
+            return {"income": income}
         else:
-            # Ensure we're using the first day of the month
-            # Check if it's a date object (not datetime)
-            if hasattr(month_date, "hour"):
-                # It's a datetime object
-                month_date = month_date.replace(
-                    day=1, hour=0, minute=0, second=0, microsecond=0
-                )
-            else:
-                # It's a date object
-                month_date = month_date.replace(day=1)
-                # Convert to datetime for consistent handling
-                month_date = datetime.combine(month_date, datetime.min.time())
-
-        data = (
-            self.client.table("monthly_income")
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("month_date", month_date.isoformat())
-            .execute()
-        )
-
-        if data.data:
-            return {"income": data.data[0]}
-        return {"income": None}  # No income record found for this month
+            return {"income": None}
 
     def set_monthly_income(
         self, user_id: int, amount: float, month_date: Optional[datetime] = None
     ) -> Dict[str, Any]:
-        """Set or update monthly income for a user.
+        """Set or update the monthly income for a user."""
+        if month_date is None:
+            month_date = datetime.now()
 
-        Args:
-            user_id (int): ID of the user
-            amount (float): Income amount
-            month_date (datetime | None, optional): Month to set income for.
-                Defaults to current month.
+        # Format as YYYY-MM-01 for consistent monthly comparisons
+        month_string = month_date.strftime("%Y-%m-01")
 
-        Returns:
-            Dict[str, Any]: Dictionary containing income record or error
-        """
-        if not month_date:
-            month_date = datetime.now().replace(
-                day=1, hour=0, minute=0, second=0, microsecond=0
-            )
-        else:
-            # Ensure we're using the first day of the month
-            # Check if it's a date object (not datetime)
-            if hasattr(month_date, "hour"):
-                # It's a datetime object
-                month_date = month_date.replace(
-                    day=1, hour=0, minute=0, second=0, microsecond=0
-                )
-            else:
-                # It's a date object
-                month_date = month_date.replace(day=1)
-                # Convert to datetime for consistent handling
-                month_date = datetime.combine(month_date, datetime.min.time())
+        # Check if income record already exists for this month
+        existing = self.get_monthly_income(user_id, month_date)
 
-        # Check if there's already an income record for this month
-        existing_data = (
-            self.client.table("monthly_income")
-            .select("id")
-            .eq("user_id", user_id)
-            .eq("month_date", month_date.isoformat())
-            .execute()
-        )
-
-        if existing_data.data:
+        if existing.get("income"):
             # Update existing record
-            income_id = existing_data.data[0]["id"]
-            data = (
-                self.client.table("monthly_income")
-                .update({"amount": amount})
-                .eq("id", income_id)
-                .execute()
-            )
+            income_id = existing["income"]["id"]
+            self.db[self.monthly_income_table].update(income_id, {"amount": amount})
         else:
             # Create new record
-            data = (
-                self.client.table("monthly_income")
-                .insert(
-                    {
-                        "user_id": user_id,
-                        "amount": amount,
-                        "month_date": month_date.isoformat(),
-                    }
-                )
-                .execute()
-            )
+            income_data = {
+                "user_id": user_id,
+                "amount": amount,
+                "month_date": month_string,
+                "created_at": datetime.now().isoformat(),
+            }
+            income_id = self.db[self.monthly_income_table].insert(income_data).last_pk
 
-        if data.data:
-            return {"income": data.data[0]}
-        return {"error": "Failed to set monthly income"}
+        # Return updated income
+        income = self.db[self.monthly_income_table].get(income_id)
+        return {"income": income}
 
     def get_income_history(self, user_id: int, limit: int = 12) -> Dict[str, Any]:
-        """Get income history for a user.
-
-        Args:
-            user_id (int): ID of the user
-            limit (int, optional): Maximum number of records to return. Defaults to 12.
-
-        Returns:
-            Dict[str, Any]: Dictionary containing income history or error
+        """Get income history for a user."""
+        conn = self.db.conn
+        query = f"""
+        SELECT * FROM {self.monthly_income_table}
+        WHERE user_id = ?
+        ORDER BY month_date DESC
+        LIMIT ?
         """
-        data = (
-            self.client.table("monthly_income")
-            .select("*")
-            .eq("user_id", user_id)
-            .order("month_date", desc=True)
-            .limit(limit)
-            .execute()
-        )
 
-        if data.data is not None:
-            return {"income_history": data.data}
-        return {"error": "Failed to fetch income history"}
+        cursor = conn.execute(query, [user_id, limit])
+        rows = cursor.fetchall()
+
+        # Convert to dictionaries
+        column_names = [desc[0] for desc in cursor.description]
+        history = [dict(zip(column_names, row)) for row in rows]
+
+        return {"history": history}
 
     def update_category(
-        self, category_id: int, name: str, color: str | None = None
+        self, category_id: int, name: str, description: str = ""
     ) -> Dict[str, Any]:
-        """Update an existing expense category.
+        """Update a category's name and description."""
+        # Check if category exists
+        category = self.db[self.categories_table].get(category_id)
 
-        Args:
-            category_id (int): ID of the category to update
-            name (str): New name for the category
-            color (str | None, optional): New color for the category. Defaults to None.
-                If None, color will not be updated.
+        if not category:
+            return {"error": "Category not found"}
 
-        Returns:
-            Dict[str, Any]: Dictionary containing updated category or error
-        """
-        update_data = {"name": name}
-        # Only include color if specified
-        if color is not None:
-            update_data["color"] = color
+        # Update category
+        update_data = {
+            "name": name,
+            "description": description,
+        }
 
-        data = (
-            self.client.table(self.categories_table)
-            .update(update_data)
-            .eq("id", category_id)
-            .execute()
-        )
+        self.db[self.categories_table].update(category_id, update_data)
 
-        if data.data:
-            return {"category": data.data[0]}
-        return {"error": "Failed to update category"}
+        # Return updated category
+        updated_category = self.db[self.categories_table].get(category_id)
+        return {"category": updated_category}
 
     def delete_category(self, category_id: int) -> Dict[str, Any]:
-        """Delete a category.
+        """Delete a category if it's not in use."""
+        # Check if category exists
+        category = self.db[self.categories_table].get(category_id)
 
-        Args:
-            category_id (int): ID of the category to delete
+        if not category:
+            return {"error": "Category not found"}
 
-        Returns:
-            Dict[str, Any]: Dictionary containing result or error
-        """
-        # Check if there are any expenses using this category
-        expenses_check = (
-            self.client.table(self.expenses_table)
-            .select("count", count="exact")
-            .eq("category_id", category_id)
-            .execute()
-        )
+        # Check if category is in use
+        conn = self.db.conn
+        query = f"SELECT COUNT(*) FROM {self.expenses_table} WHERE category_id = ?"
+        cursor = conn.execute(query, [category_id])
+        count = cursor.fetchone()[0]
 
-        if expenses_check.count > 0:
-            return {
-                "error": f"Cannot delete category. It's used by "
-                f"{expenses_check.count} expenses."
-            }
+        if count > 0:
+            return {"error": f"Cannot delete category. It is used by {count} expenses."}
 
         # Delete the category
-        data = (
-            self.client.table(self.categories_table)
-            .delete()
-            .eq("id", category_id)
-            .execute()
-        )
+        self.db[self.categories_table].delete(category_id)
+        return {"success": True}
 
-        if data.data:
-            return {"success": True, "message": "Category deleted successfully"}
-        return {"error": "Failed to delete category"}
+    def create_user(
+        self, user_id: str, email: str, password_hash: str
+    ) -> Dict[str, Any]:
+        """Create a new user in the database."""
+        user_data = {
+            "id": user_id,
+            "email": email,
+            "password_hash": password_hash,
+            "created_at": datetime.now().isoformat(),
+        }
+
+        try:
+            self.db[self.users_table].insert(user_data)
+            user = self.db[self.users_table].get(user_id)
+            return {"user": user}
+        except sqlite3.IntegrityError:
+            return {"error": "User with this email already exists"}
+
+    def get_user_by_email(self, email: str) -> Dict[str, Any]:
+        """Get a user by email."""
+        conn = self.db.conn
+        query = f"SELECT * FROM {self.users_table} WHERE email = ?"
+        cursor = conn.execute(query, [email])
+        row = cursor.fetchone()
+
+        if row:
+            # Convert to dictionary
+            column_names = [desc[0] for desc in cursor.description]
+            user = dict(zip(column_names, row))
+            return {"user": user}
+        else:
+            return {"user": None}
 
     def create_profile(
         self, user_id: str, display_name: str | None = None
     ) -> Dict[str, Any]:
-        """Create a new user profile record.
+        """Create a user profile."""
+        # Check if profile already exists
+        conn = self.db.conn
+        query = f"SELECT * FROM {self.profiles_table} WHERE user_id = ?"
+        cursor = conn.execute(query, [user_id])
+        existing_profile = cursor.fetchone()
 
-        Args:
-            user_id (str): ID of the user (from auth.users)
-            display_name (str | None, optional): Display name for the user.
-                Defaults to None, which will use a default name format.
+        if existing_profile:
+            column_names = [desc[0] for desc in cursor.description]
+            profile = dict(zip(column_names, existing_profile))
+            return {"profile": profile}
 
-        Returns:
-            Dict[str, Any]: Response containing created profile or error
-        """
-        # If display_name is not provided, use a default based on user ID
-        if not display_name:
-            # Just use a default format based on user_id
-            # This avoids the need to query the auth API
-            display_name = f"User_{user_id[:8]}"  # First 8 chars of UUID as fallback
+        # Create new profile
+        profile_data = {
+            "user_id": user_id,
+            "display_name": display_name or "User",
+            "created_at": datetime.now().isoformat(),
+        }
 
-        data = (
-            self.client.table(self.profiles_table)
-            .insert(
-                {
-                    "user_id": user_id,
-                    "display_name": display_name,
-                }
-            )
-            .execute()
-        )
+        profile_id = self.db[self.profiles_table].insert(profile_data).last_pk
+        profile = self.db[self.profiles_table].get(profile_id)
 
-        if not data.data:
-            return {"error": "Failed to create user profile"}
+        if not profile:
+            return {"error": "Failed to create profile"}
 
-        return {"profile": data.data[0]}
+        return {"profile": profile}
 
     def get_profile(self, user_id: str) -> Dict[str, Any]:
-        """Get a user profile by user ID.
+        """Get a user's profile."""
+        conn = self.db.conn
+        query = f"SELECT * FROM {self.profiles_table} WHERE user_id = ?"
+        cursor = conn.execute(query, [user_id])
+        row = cursor.fetchone()
 
-        Args:
-            user_id (str): ID of the user (from auth.users)
-
-        Returns:
-            Dict[str, Any]: Response containing profile or error
-        """
-        data = (
-            self.client.table(self.profiles_table)
-            .select("*")
-            .eq("user_id", user_id)
-            .execute()
-        )
-
-        if data.data and len(data.data) > 0:
-            return {"profile": data.data[0]}
-
-        return {"profile": None}
+        if row:
+            # Convert to dictionary
+            column_names = [desc[0] for desc in cursor.description]
+            profile = dict(zip(column_names, row))
+            return {"profile": profile}
+        else:
+            return {"profile": None}
 
     def update_profile(self, user_id: str, display_name: str) -> Dict[str, Any]:
-        """Update a user profile.
+        """Update a user's profile."""
+        # Get the profile ID
+        profile_result = self.get_profile(user_id)
 
-        Args:
-            user_id (str): ID of the user (from auth.users)
-            display_name (str): New display name for the user
+        if not profile_result.get("profile"):
+            return {"error": "Profile not found"}
 
-        Returns:
-            Dict[str, Any]: Response containing updated profile or error
-        """
-        # Check if profile exists
-        existing_profile = self.get_profile(user_id)
+        profile_id = profile_result["profile"]["id"]
 
-        if existing_profile.get("error"):
-            return existing_profile
+        # Update the profile
+        self.db[self.profiles_table].update(profile_id, {"display_name": display_name})
 
-        if existing_profile.get("profile"):
-            # Update existing profile
-            profile_id = existing_profile["profile"]["id"]
-            data = (
-                self.client.table(self.profiles_table)
-                .update({"display_name": display_name})
-                .eq("id", profile_id)
-                .execute()
-            )
-
-            if data.data:
-                return {"profile": data.data[0]}
-            return {"error": "Failed to update profile"}
-        else:
-            # Create new profile
-            return self.create_profile(user_id, display_name)
+        # Return updated profile
+        updated_profile = self.db[self.profiles_table].get(profile_id)
+        return {"profile": updated_profile}
 
     def get_all_profiles(self) -> Dict[str, Any]:
-        """Get all user profiles from the database.
-
-        Returns:
-            Dict[str, Any]: Dictionary containing all profiles or error
-        """
-        data = self.client.table(self.profiles_table).select("*").execute()
-
-        if data.data is not None:
-            return {"profiles": data.data}
-        return {"profiles": []}
+        """Get all user profiles."""
+        profiles = list(self.db[self.profiles_table].rows)
+        return {"profiles": profiles}
 
     def get_user_balance(self, user_id: int) -> Dict[str, Any]:
-        """Calculate the balance between a user and all other users.
+        """Calculate balance between users based on expenses."""
+        # We need to calculate:
+        # 1. How much this user has paid for others
+        # 2. How much others have paid for this user
 
-        This helps track how much users owe each other based on shared expenses
-        and expenses where one user is the beneficiary but another is the payer.
+        conn = self.db.conn
 
-        Args:
-            user_id (int): ID of the user
-
-        Returns:
-            Dict[str, Any]: Dictionary containing balance information or error
+        # 1. Total amount user has paid for others
+        paid_query = f"""
+        SELECT SUM(e.amount) as paid
+        FROM {self.expenses_table} e
+        WHERE e.payer_id = ? AND (e.is_shared = 1 OR e.beneficiary_id != ?)
         """
-        # Get all expenses where user is involved
+        cursor = conn.execute(paid_query, [user_id, user_id])
+        paid_row = cursor.fetchone()
+        paid = paid_row[0] if paid_row[0] is not None else 0
 
-        # 1. Get expenses where user is the payer for someone else
-        paid_for_others_query = (
-            self.client.table(self.expenses_table)
-            .select("*")
-            .eq("payer_id", user_id)
-            .neq("beneficiary_id", user_id)
-            .eq("is_shared", False)
-            .execute()
-        )
+        # 2. Total amount others have paid for this user
+        owed_query = f"""
+        SELECT SUM(es.amount) as owed
+        FROM {self.expenses_split_table} es
+        JOIN {self.expenses_table} e ON es.expense_id = e.id
+        WHERE es.user_id = ? AND e.payer_id != ?
+        """
+        cursor = conn.execute(owed_query, [user_id, user_id])
+        owed_row = cursor.fetchone()
+        owed = owed_row[0] if owed_row[0] is not None else 0
 
-        # 2. Get expenses where someone else paid for the user
-        others_paid_query = (
-            self.client.table(self.expenses_table)
-            .select("*")
-            .eq("beneficiary_id", user_id)
-            .neq("payer_id", user_id)
-            .eq("is_shared", False)
-            .execute()
-        )
+        # Calculate overall balance
+        balance = paid - owed
 
-        # 3. Get shared expenses where user is the payer
-        shared_paid_query = (
-            self.client.table(self.expenses_table)
-            .select("*")
-            .eq("payer_id", user_id)
-            .eq("is_shared", True)
-            .execute()
-        )
-
-        # 4. Get shared expenses where user participates but is not the payer
-        shared_query = (
-            self.client.table("expenses_split")
-            .select("expense_id, amount")
-            .eq("user_id", user_id)
-            .execute()
-        )
-
-        # Process the results to calculate balances
-        user_balances = {}
-
-        # Process paid for others
-        if paid_for_others_query.data:
-            for expense in paid_for_others_query.data:
-                beneficiary_id = expense.get("beneficiary_id")
-                if beneficiary_id:
-                    if beneficiary_id not in user_balances:
-                        user_balances[beneficiary_id] = {
-                            "owes_user": 0,
-                            "user_owes": 0,
-                        }
-                    user_balances[beneficiary_id]["owes_user"] += int(
-                        expense.get("amount", 0)
-                    )
-
-        # Process others paid for user
-        if others_paid_query.data:
-            for expense in others_paid_query.data:
-                payer_id = expense.get("payer_id")
-                if payer_id:
-                    if payer_id not in user_balances:
-                        user_balances[payer_id] = {"owes_user": 0, "user_owes": 0}
-                    user_balances[payer_id]["user_owes"] += int(
-                        expense.get("amount", 0)
-                    )
-
-        # Process shared expenses where user is the payer
-        if shared_paid_query.data:
-            for expense in shared_paid_query.data:
-                expense_id = expense.get("id")
-                if expense_id:
-                    # Get the splits for this expense
-                    splits_result = self.get_expense_splits(expense_id)
-                    if "split_details" in splits_result:
-                        for split in splits_result["split_details"]:
-                            split_user_id = split.get("user_id")
-                            if split_user_id and split_user_id != user_id:
-                                if split_user_id not in user_balances:
-                                    user_balances[split_user_id] = {
-                                        "owes_user": 0,
-                                        "user_owes": 0,
-                                    }
-                                # Other user owes their split amount to current user
-                                user_balances[split_user_id]["owes_user"] += int(
-                                    split.get("amount", 0)
-                                )
-
-        # Process shared expenses where user participates but is not the payer
-        shared_expense_ids = (
-            [item["expense_id"] for item in shared_query.data]
-            if shared_query.data
-            else []
-        )
-        if shared_expense_ids:
-            # Get the full expense details
-            in_query = (
-                self.client.table(self.expenses_table)
-                .select("*")
-                .in_("id", shared_expense_ids)
-                .execute()
-            )
-
-            if in_query.data:
-                for expense in in_query.data:
-                    payer_id = expense.get("payer_id")
-                    if payer_id and payer_id != user_id:
-                        if payer_id not in user_balances:
-                            user_balances[payer_id] = {
-                                "owes_user": 0,
-                                "user_owes": 0,
-                            }
-                        # Find the user's split amount for this expense
-                        user_split_amount = 0
-                        for split in shared_query.data:
-                            if split["expense_id"] == expense["id"]:
-                                user_split_amount = int(split.get("amount", 0))
-                                break
-
-                        # Current user owes their split amount to the payer
-                        user_balances[payer_id]["user_owes"] += user_split_amount
-
-        # Create the final result
-        balance_list = []
-        for other_user_id, balance in user_balances.items():
-            net_balance = balance["owes_user"] - balance["user_owes"]
-            # Convert float values to int for consistency
-            balance["owes_user"] = int(balance["owes_user"])
-            balance["user_owes"] = int(balance["user_owes"])
-            balance_list.append(
-                {
-                    "user_id": other_user_id,
-                    "owes_user": balance["owes_user"],
-                    "user_owes": balance["user_owes"],
-                    "net_balance": net_balance,
-                }
-            )
-
-        return {"balances": balance_list}
+        return {"balance": balance, "paid": paid, "owed": owed}

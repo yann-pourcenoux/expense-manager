@@ -372,7 +372,8 @@ def display_expense_list(db_manager: DatabaseManager, profile_id: int) -> None:
     if "beneficiary_id" in display_df.columns:
         display_df["beneficiary"] = display_df["beneficiary_id"].map(profile_names)
         # For shared expenses or when beneficiary is not set, show appropriate text
-        display_df.loc[display_df["is_shared"], "beneficiary"] = "Shared"
+        # Convert SQLite integer (0/1) to boolean for filtering
+        display_df.loc[display_df["is_shared"] == 1, "beneficiary"] = "Shared"
         display_df["beneficiary"] = display_df["beneficiary"].fillna("Same as payer")
 
     # Select columns for display
@@ -411,7 +412,7 @@ def display_expense_list(db_manager: DatabaseManager, profile_id: int) -> None:
         elif exp.get("description"):
             label += f" - {exp['description'][:20]}..."
 
-        if exp.get("is_shared", False):
+        if exp.get("is_shared") == 1:
             label += " (Shared)"
         elif exp.get("beneficiary_id") and exp.get("beneficiary_id") != profile_id:
             # If expense has a beneficiary and it's not the current user, show it
@@ -464,11 +465,11 @@ def display_user_balances(db_manager: DatabaseManager, profile_id: int) -> None:
         [
             expense["amount"]
             for expense in expenses
-            if expense["is_shared"] and expense["payer_id"] == profile_id
+            if expense["is_shared"] == 1 and expense["payer_id"] == profile_id
         ]
     )
     total_shared = sum(
-        [expense["amount"] for expense in expenses if expense["is_shared"]]
+        [expense["amount"] for expense in expenses if expense["is_shared"] == 1]
     )
 
     due_per_person = total_shared / 2
@@ -479,14 +480,14 @@ def display_user_balances(db_manager: DatabaseManager, profile_id: int) -> None:
         [
             expense["amount"]
             for expense in expenses
-            if not expense["is_shared"] and expense["payer_id"] == profile_id
+            if expense["is_shared"] == 0 and expense["payer_id"] == profile_id
         ]
     )
     you_owe = sum(
         [
             expense["amount"]
             for expense in expenses
-            if not expense["is_shared"] and expense["beneficiary_id"] == profile_id
+            if expense["is_shared"] == 0 and expense["beneficiary_id"] == profile_id
         ]
     )
     non_shared_you_owe = you_owe - paid_by_you

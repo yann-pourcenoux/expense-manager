@@ -9,6 +9,7 @@ import streamlit as st
 from expense_manager.auth import AuthManager
 from expense_manager.db import DatabaseManager
 from expense_manager.pages.categories import display_category_manager
+from expense_manager.pages.dashboard import display_dashboard
 from expense_manager.pages.expenses import display_expense_manager
 from expense_manager.pages.income import display_income_manager
 from expense_manager.pages.profile import display_profile_manager, display_profile_setup
@@ -154,6 +155,13 @@ def display_main_app() -> None:
 
         # Simple navigation buttons
         st.sidebar.button(
+            "📊 Dashboard",
+            key="nav_dashboard",
+            use_container_width=True,
+            on_click=lambda: set_current_page("Dashboard"),
+        )
+
+        st.sidebar.button(
             "💰 Expenses",
             key="nav_expenses",
             use_container_width=True,
@@ -191,7 +199,9 @@ def display_main_app() -> None:
             st.rerun()
 
     # Display the selected page
-    if st.session_state.current_page == "Manage Expenses":
+    if st.session_state.current_page == "Dashboard":
+        display_dashboard()
+    elif st.session_state.current_page == "Manage Expenses":
         display_expense_manager()
     elif st.session_state.current_page == "Income":
         display_income_manager()
