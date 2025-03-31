@@ -17,6 +17,7 @@ dependencies = [
     "plotly>=5.14.0",
     "pydantic[email]>=2.0.0",
     "email-validator>=2.0.0",
+    "pandas-stubs>=2.2.3.250308",
 ]
 
 [project.scripts]
@@ -34,8 +35,8 @@ dev = [
 [tool.ruff]
 target-version = "py312"
 line-length = 88
-select = ["E", "F", "I", "D"] # Error, Flake8, Import sorting, Docstrings
-ignore = []
+lint.select = ["E", "F", "I", "D"] # Error, Flake8, Import sorting, Docstrings
+lint.ignore = []
 
 [tool.ruff.format]
 quote-style = "double"

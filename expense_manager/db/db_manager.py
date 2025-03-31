@@ -101,8 +101,12 @@ class DatabaseManager:
         return expense
 
     def get_expenses_for_balance(self) -> list[dict]:
-        """"""
+        """Get expenses relevant for balance calculations.
 
+        Returns:
+            list[dict]: List of expenses that are either shared or have
+                different payer and beneficiary
+        """
         expenses = self.client.table(self.expenses_table).select("*").execute()
 
         if expenses.data is not None:
@@ -122,8 +126,20 @@ class DatabaseManager:
         end_date: Optional[datetime] = None,
         category_id: Optional[int] = None,
     ) -> list[dict]:
-        """"""
+        """Get expenses for a specific user with optional filtering.
 
+        Args:
+            user_id (int): ID of the user
+            start_date (Optional[datetime], optional): Filter expenses after
+                this date. Defaults to None.
+            end_date (Optional[datetime], optional): Filter expenses before
+                this date. Defaults to None.
+            category_id (Optional[int], optional): Filter by category ID.
+                Defaults to None.
+
+        Returns:
+            list[dict]: List of expenses matching the criteria
+        """
         # Select the expenses that:
         # - are shared
         # - the user is the payer

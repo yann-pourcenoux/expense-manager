@@ -14,7 +14,8 @@ def display_profile_setup(on_complete: Callable[[], None]) -> None:
     """Display the profile setup form for first-time users.
 
     Args:
-        on_complete (Callable[[], None]): Function to call when profile setup is complete
+        on_complete (Callable[[], None]): Function to call when profile setup
+            is complete
     """
     st.title("🙋 Set Up Your Profile")
 
