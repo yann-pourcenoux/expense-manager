@@ -4,17 +4,15 @@ This module handles all interactions with the SQLite database for expense data,
 including creating, reading, updating, and deleting expenses.
 """
 
-import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from dotenv import load_dotenv
+import streamlit as st
 from sqlite_utils import Database
 
-# Load environment variables
-load_dotenv()
+from expense_manager.config import load_config
 
 
 class DatabaseManager:
@@ -26,7 +24,13 @@ class DatabaseManager:
 
     def __init__(self) -> None:
         """Initialize SQLite database connection and create tables if needed."""
-        db_path = os.getenv("SQLITE_DB_PATH", "expense_manager.db")
+        # Load configuration from session state or default
+        if "config" in st.session_state:
+            config = st.session_state.config
+        else:
+            config = load_config()
+
+        db_path = config["database"]["path"]
 
         # Create directory for database if it doesn't exist
         db_file = Path(db_path)
@@ -200,6 +204,36 @@ class DatabaseManager:
 
         return expense
 
+    def _get_expenses_with_filter(
+        self, where_clause: str = "", params: dict = None
+    ) -> list[dict]:
+        """Internal helper to get expenses with a custom WHERE clause.
+
+        Args:
+            where_clause: SQL WHERE clause (without the 'WHERE' keyword)
+            params: Parameters for the query
+
+        Returns:
+            list[dict]: List of expenses matching the criteria
+        """
+        if params is None:
+            params = {}
+
+        # Build query
+        query = f"SELECT * FROM {self.expenses_table}"
+        if where_clause:
+            query += f" WHERE {where_clause}"
+
+        # Execute the query
+        conn = self.db.conn
+        cursor = conn.execute(query, params)
+        rows = cursor.fetchall()
+
+        # Convert to dictionaries
+        column_names = [desc[0] for desc in cursor.description]
+        expenses = [dict(zip(column_names, row)) for row in rows]
+        return expenses
+
     def get_expenses_for_balance(self) -> list[dict]:
         """Get expenses relevant for balance calculations.
 
@@ -207,16 +241,8 @@ class DatabaseManager:
             list[dict]: List of expenses that are either shared or have
                 different payer and beneficiary
         """
-        expenses = list(self.db[self.expenses_table].rows)
-
-        # Filter expenses that are either shared or have different payer and beneficiary
-        expenses = [
-            expense
-            for expense in expenses
-            if expense["is_shared"] or expense["payer_id"] != expense["beneficiary_id"]
-        ]
-
-        return expenses
+        where_clause = "is_shared = 1 OR payer_id != beneficiary_id"
+        return self._get_expenses_with_filter(where_clause)
 
     def get_expenses_for_list(
         self,
@@ -262,19 +288,15 @@ class DatabaseManager:
             params["category_id"] = category_id
 
         where_clause = " AND ".join(where_clauses)
+        return self._get_expenses_with_filter(where_clause, params)
 
-        # Execute the query
-        conn = self.db.conn
-        query = f"SELECT * FROM {self.expenses_table} WHERE {where_clause}"
-
-        cursor = conn.execute(query, params)
-        rows = cursor.fetchall()
-
-        # Convert to dictionaries
-        column_names = [desc[0] for desc in cursor.description]
-        expenses = [dict(zip(column_names, row)) for row in rows]
-
-        return expenses
+    def get_shared_expenses_for_dashboard(
+        self, start_date: str, end_date: str
+    ) -> list[dict]:
+        """Get shared expenses for the dashboard."""
+        where_clause = "is_shared = 1 AND date >= :start_date AND date <= :end_date"
+        params = {"start_date": start_date, "end_date": end_date}
+        return self._get_expenses_with_filter(where_clause, params)
 
     def update_expense(
         self,
@@ -393,21 +415,6 @@ class DatabaseManager:
 
         return {"splits": splits}
 
-    def get_shared_expenses_for_dashboard(
-        self, start_date: str, end_date: str
-    ) -> Dict[str, Any]:
-        """Get shared expenses for the dashboard."""
-        conn = self.db.conn
-        query = (
-            f"SELECT * FROM {self.expenses_table} "
-            f"WHERE is_shared = 1 "
-            f"AND date >= :start_date AND date <= :end_date"
-        )
-        cursor = conn.execute(query, {"start_date": start_date, "end_date": end_date})
-        rows = cursor.fetchall()
-
-        return {"expenses": rows}
-
     def update_expense_splits(
         self, expense_id: int, user_id: int, split_with_users: List[int]
     ) -> Dict[str, Any]:
@@ -517,6 +524,30 @@ class DatabaseManager:
         history = [dict(zip(column_names, row)) for row in rows]
 
         return {"history": history}
+
+    def delete_monthly_income(self, income_id: int, user_id: int) -> Dict[str, Any]:
+        """Delete a monthly income record.
+
+        Args:
+            income_id (int): ID of the income record to delete
+            user_id (int): ID of the user making the request
+
+        Returns:
+            Dict[str, Any]: Result of the deletion
+        """
+        # Check if income record exists and belongs to the user
+        income = self.db[self.monthly_income_table].get(income_id)
+
+        if not income:
+            return {"error": "Income record not found"}
+
+        if income["user_id"] != user_id:
+            return {"error": "You can only delete your own income records"}
+
+        # Delete the income record
+        self.db[self.monthly_income_table].delete(income_id)
+
+        return {"success": True}
 
     def update_category(
         self, category_id: int, name: str, description: str = ""
@@ -657,9 +688,34 @@ class DatabaseManager:
         return {"profile": updated_profile}
 
     def get_all_profiles(self) -> Dict[str, Any]:
-        """Get all user profiles."""
+        """Return all profiles in the database."""
         profiles = list(self.db[self.profiles_table].rows)
         return {"profiles": profiles}
+
+    def update_password(self, user_id: str, password_hash: str) -> Dict[str, Any]:
+        """Update a user's password.
+
+        Args:
+            user_id (str): The ID of the user to update
+            password_hash (str): The new password hash
+
+        Returns:
+            Dict[str, Any]: Dict containing success status or error message
+        """
+        try:
+            # Verify user exists
+            user = self.db[self.users_table].get(user_id)
+            if not user:
+                return {"error": "User not found"}
+
+            # Update password
+            self.db[self.users_table].update(
+                user_id, {"password_hash": password_hash}, alter=True
+            )
+
+            return {"success": True}
+        except Exception as e:
+            return {"error": str(e)}
 
     def get_user_balance(self, user_id: int) -> Dict[str, Any]:
         """Calculate balance between users based on expenses."""
@@ -694,3 +750,40 @@ class DatabaseManager:
         balance = paid - owed
 
         return {"balance": balance, "paid": paid, "owed": owed}
+
+    def get_individual_expenses_for_dashboard(
+        self, user_id: int, start_date: str, end_date: str
+    ) -> list[dict]:
+        """Get expenses for the dashboard where the specified user is involved.
+
+        This pulls data from the expenses_split table to get the individual expenses
+        where the user is involved, including both their own expenses and shared
+        expenses with the correct split amount.
+
+        Args:
+            user_id (int): ID of the user
+            start_date (str): Start date in ISO format
+            end_date (str): End date in ISO format
+
+        Returns:
+            list[dict]: List of expense records with category and split amount
+        """
+        conn = self.db.conn
+
+        query = f"""
+        SELECT e.*, es.amount as split_amount, c.name as category_name
+        FROM {self.expenses_split_table} es
+        JOIN {self.expenses_table} e ON es.expense_id = e.id
+        LEFT JOIN {self.categories_table} c ON e.category_id = c.id
+        WHERE es.user_id = ? AND e.date >= ? AND e.date <= ?
+        ORDER BY e.date DESC
+        """
+
+        cursor = conn.execute(query, [user_id, start_date, end_date])
+        rows = cursor.fetchall()
+
+        # Convert to dictionaries
+        column_names = [desc[0] for desc in cursor.description]
+        expenses = [dict(zip(column_names, row)) for row in rows]
+
+        return expenses

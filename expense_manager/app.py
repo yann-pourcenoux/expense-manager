@@ -4,31 +4,71 @@ This module is the entry point for the Streamlit application and handles the
 authentication flow for users.
 """
 
+import argparse
+
 import streamlit as st
 
-from expense_manager.auth import AuthManager
-from expense_manager.db import DatabaseManager
+from expense_manager.auth.auth_manager import AuthManager
+from expense_manager.config import load_config
+from expense_manager.db.db_manager import DatabaseManager
 from expense_manager.pages.categories import display_category_manager
-from expense_manager.pages.dashboard import display_dashboard
+from expense_manager.pages.dashboard import (
+    display_dashboard,
+)
 from expense_manager.pages.expenses import display_expense_manager
+from expense_manager.pages.flow import display_flow_page
 from expense_manager.pages.income import display_income_manager
-from expense_manager.pages.profile import display_profile_manager, display_profile_setup
-
-# Configure Streamlit page
-st.set_page_config(
-    page_title="Expense Manager",
-    page_icon="💸",
-    layout="wide",
-    initial_sidebar_state="expanded",
+from expense_manager.pages.profile import (
+    display_profile_manager,
+    display_profile_setup,
 )
 
-# Initialize the authentication manager
-auth_manager = AuthManager()
-db_manager = DatabaseManager()
+# Global variables for managers
+auth_manager = None
+db_manager = None
+
+
+# Parse command line arguments
+def parse_arguments():
+    """Parse command line arguments for the application.
+
+    Returns:
+        argparse.Namespace: The parsed command line arguments
+    """
+    parser = argparse.ArgumentParser(description="Expense Manager Streamlit App")
+    parser.add_argument(
+        "--profile",
+        type=str,
+        default="development",
+        choices=["development", "production"],
+        help="Configuration profile to use (development or production)",
+    )
+    return parser.parse_args()
 
 
 def main() -> None:
     """Set up the app flow based on authentication state."""
+    global auth_manager, db_manager
+
+    # Parse arguments
+    args = parse_arguments()
+
+    # Load config based on profile and store in session state
+    config = load_config(args.profile)
+    st.session_state.config = config
+
+    # Configure Streamlit page
+    st.set_page_config(
+        page_title="Expense Manager",
+        page_icon="💸",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    # Initialize the authentication manager
+    auth_manager = AuthManager()
+    db_manager = DatabaseManager()
+
     # Check if user is already authenticated
     if "user" not in st.session_state:
         st.session_state.user = None
@@ -176,6 +216,13 @@ def display_main_app() -> None:
         )
 
         st.sidebar.button(
+            "📊 Flow",
+            key="nav_flow",
+            use_container_width=True,
+            on_click=lambda: set_current_page("Flow"),
+        )
+
+        st.sidebar.button(
             "🏷️ Categories",
             key="nav_categories",
             use_container_width=True,
@@ -205,6 +252,8 @@ def display_main_app() -> None:
         display_expense_manager()
     elif st.session_state.current_page == "Income":
         display_income_manager()
+    elif st.session_state.current_page == "Flow":
+        display_flow_page()
     elif st.session_state.current_page == "Categories":
         display_category_manager()
     elif st.session_state.current_page == "Profile":

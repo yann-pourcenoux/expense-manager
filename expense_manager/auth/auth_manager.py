@@ -121,3 +121,42 @@ class AuthManager:
             Dict[str, Any] | None: User data if logged in, None otherwise
         """
         return self.current_user
+
+    def change_password(
+        self, user_id: str, current_password: str, new_password: str
+    ) -> Dict[str, Any]:
+        """Change a user's password.
+
+        Args:
+            user_id (str): The ID of the user
+            current_password (str): The current password for verification
+            new_password (str): The new password to set
+
+        Returns:
+            Dict[str, Any]: Dict containing success status or error message
+        """
+        try:
+            # Get user by ID
+            user_result = self.db_manager.get_user_by_email(self.current_user["email"])
+
+            if not user_result.get("user"):
+                return {"error": "User not found"}
+
+            user = user_result["user"]
+
+            # Verify current password
+            current_password_hash = self._hash_password(current_password)
+            if current_password_hash != user["password_hash"]:
+                return {"error": "Current password is incorrect"}
+
+            # Hash and update new password
+            new_password_hash = self._hash_password(new_password)
+            result = self.db_manager.update_password(user_id, new_password_hash)
+
+            if result.get("error"):
+                return {"error": result["error"]}
+
+            return {"success": True}
+
+        except Exception as e:
+            return {"error": str(e)}

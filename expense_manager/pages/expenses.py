@@ -314,23 +314,6 @@ def display_expense_list(db_manager: DatabaseManager, profile_id: int) -> None:
     categories = categories_result.get("categories", [])
     category_map = {cat["id"]: cat["name"] for cat in categories}
 
-    # Create a DataFrame for display
-    expenses_df = prepare_expense_data(expenses)
-
-    # Get split information for each expense
-    split_counts = {}
-    for exp in expenses:
-        if exp.get("is_shared", False):
-            split_result = db_manager.get_expense_splits(exp["id"])
-            split_users = split_result.get("user_ids", [])
-            split_counts[exp["id"]] = len(split_users) if split_users else 1
-        else:
-            split_counts[exp["id"]] = 1
-
-    # Add split count to the DataFrame
-    if "id" in expenses_df.columns:
-        expenses_df["split_count"] = expenses_df["id"].map(split_counts)
-
     # Get all profiles for display in expense list
     profiles_result = db_manager.get_all_profiles()
     profiles = profiles_result.get("profiles", [])
@@ -338,43 +321,18 @@ def display_expense_list(db_manager: DatabaseManager, profile_id: int) -> None:
     # Create a mapping of profile IDs to display names
     profile_names = {p["id"]: p["display_name"] for p in profiles}
 
-    # Format for display
-    display_df = expenses_df.copy()
+    # Create a DataFrame with all formatting applied
+    display_df = prepare_expense_data(expenses, profile_names, category_map)
 
-    # Add category names
-    if "category_id" in display_df.columns:
-        display_df["category"] = display_df["category_id"].map(category_map)
-
-    # Format date
+    # Format date for display (keep this here as it's specific to the display
+    # in this view)
     if "date" in display_df.columns:
         display_df["date"] = display_df["date"].dt.strftime("%Y-%m-%d")
 
-    # Format amount
-    if "amount" in display_df.columns:
-        display_df["amount"] = display_df["amount"].map(format_currency)
-
-    # Add shared indicator
-    if "is_shared" in display_df.columns:
-        display_df["shared"] = display_df["is_shared"].map({True: "Yes", False: "No"})
-
-    # Add payer information
-    if "payer_id" in display_df.columns:
-        display_df["payer"] = display_df["payer_id"].map(profile_names)
-        # Ensure the mapping worked correctly
-        display_df["payer"] = display_df["payer"].fillna("Unknown")
-
-    # Add reporter information
-    if "reporter_id" in display_df.columns:
-        display_df["reporter"] = display_df["reporter_id"].map(profile_names)
-        display_df["reporter"] = display_df["reporter"].fillna("Unknown")
-
-    # Add beneficiary information
-    if "beneficiary_id" in display_df.columns:
-        display_df["beneficiary"] = display_df["beneficiary_id"].map(profile_names)
-        # For shared expenses or when beneficiary is not set, show appropriate text
-        # Convert SQLite integer (0/1) to boolean for filtering
-        display_df.loc[display_df["is_shared"] == 1, "beneficiary"] = "Shared"
-        display_df["beneficiary"] = display_df["beneficiary"].fillna("Same as payer")
+    # Use the formatted amount for display
+    if "amount_formatted" in display_df.columns:
+        display_df["amount"] = display_df["amount_formatted"]
+        display_df = display_df.drop(columns=["amount_formatted"])
 
     # Select columns for display
     display_columns = [

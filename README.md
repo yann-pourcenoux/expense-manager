@@ -11,6 +11,7 @@ A Streamlit web application for managing personal expenses.
 - **Visualization**: View expense trends and breakdowns with interactive charts
 - **Data Analysis**: Analyze spending patterns over time
 - **Responsive Interface**: Built with Streamlit for a clean, responsive UI
+- **Multiple Configurations**: Run development and production instances with different configuration profiles
 
 ## Requirements
 
@@ -18,6 +19,7 @@ A Streamlit web application for managing personal expenses.
 - Streamlit 1.27+
 - Pandas 2.0+
 - Plotly 5.14+
+- PyYAML 6.0+
 - SQLite (included in Python standard library)
 
 ## Installation
@@ -33,16 +35,50 @@ A Streamlit web application for managing personal expenses.
    pip install -e .
    ```
 
-## Database Setup
+## Configuration Profiles
 
-The application uses SQLite for data storage, which requires no additional setup. The database file (`expense_manager.db`) will be created automatically when you first run the application.
+The application uses YAML configuration files to customize settings like database path and server port. Configuration files are stored in the `config/` directory.
+
+### Available Profiles
+
+- `development.yaml`: Development configuration with port 8502
+- `production.yaml`: Production configuration with port 8501
+
+The app uses the development profile by default.
 
 ## Running the Application
 
-Run the Streamlit app:
+Run the Streamlit app with a simple command:
 
 ```
-streamlit run expense_manager/app.py
+# Run with development profile (default)
+run
+
+# Run with development profile (explicitly)
+run dev
+
+# Run with production profile
+run prod
+```
+
+Alternatively, you can use the run_app.py script:
+
+```
+# Run with development profile
+./run_app.py --profile development
+
+# Run with production profile
+./run_app.py --profile production
+```
+
+You can run multiple instances simultaneously with different profiles:
+
+```
+# Terminal 1 - Development instance on port 8502
+run
+
+# Terminal 2 - Production instance on port 8501
+run prod
 ```
 
 ## Development
