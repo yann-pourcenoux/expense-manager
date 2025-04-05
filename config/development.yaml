@@ -1,0 +1,5 @@
+database:
+  path: expense_manager_dev.db
+server:
+  port: 8502
+  address: localhost

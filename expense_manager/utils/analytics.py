@@ -9,15 +9,25 @@ from typing import Any, Dict, List, Set
 import pandas as pd
 import plotly.graph_objects as go
 
+from expense_manager.utils.models import format_currency
 
-def prepare_expense_data(expenses: List[Dict[str, Any]]) -> pd.DataFrame:
-    """Convert expenses list to pandas DataFrame with proper data types.
+
+def prepare_expense_data(
+    expenses: List[Dict[str, Any]],
+    profile_names: Dict[int, str] = None,
+    category_map: Dict[str, str] = None,
+) -> pd.DataFrame:
+    """Convert expenses list to pandas DataFrame with proper data types and formatting.
 
     Args:
         expenses (List[Dict[str, Any]]): List of expense records
+        profile_names (Dict[int, str], optional): Mapping of profile IDs to display
+            names. Defaults to None.
+        category_map (Dict[str, str], optional): Mapping of category IDs to names.
+            Defaults to None.
 
     Returns:
-        pd.DataFrame: DataFrame with expenses data
+        pd.DataFrame: DataFrame with expenses data and formatting applied
     """
     if not expenses:
         return pd.DataFrame()
@@ -33,28 +43,44 @@ def prepare_expense_data(expenses: List[Dict[str, Any]]) -> pd.DataFrame:
     if "amount" in df.columns:
         df["amount"] = df["amount"].astype(float)
 
-    # Add a column for the number of participants in shared expenses
-    if "is_shared" in df.columns:
-        # For shared expenses, count the number of participants from split_amounts
-        def count_participants(row):
-            if not row.get("is_shared", False):
-                return 1
+    # Format data for display if mappings are provided
+    display_df = df.copy()
 
-            # Check for the new split_amounts field
-            if "split_amounts" in row and isinstance(row["split_amounts"], dict):
-                return len(row["split_amounts"])
-            # Fallback to default of 2 if we don't have split information
-            return 2
+    # Add category names if category map is provided
+    if category_map and "category_id" in display_df.columns:
+        display_df["category"] = display_df["category_id"].map(category_map)
 
-        # Apply the function to add a split_count column
-        df["split_count"] = df.apply(count_participants, axis=1)
+    # Format amount
+    if "amount" in display_df.columns:
+        display_df["amount_formatted"] = display_df["amount"].map(format_currency)
 
-    # Ensure beneficiary_id is present
-    if "beneficiary_id" not in df.columns and "payer_id" in df.columns:
-        # For non-shared expenses without a beneficiary, default to payer
-        df["beneficiary_id"] = df["payer_id"]
+    # Add shared indicator
+    if "is_shared" in display_df.columns:
+        display_df["shared"] = display_df["is_shared"].map({1: "Yes", 0: "No"})
 
-    return df
+    # Add profile information if profile names are provided
+    if profile_names:
+        # Add payer information
+        if "payer_id" in display_df.columns:
+            display_df["payer"] = display_df["payer_id"].map(profile_names)
+            display_df["payer"] = display_df["payer"].fillna("Unknown")
+
+        # Add reporter information
+        if "reporter_id" in display_df.columns:
+            display_df["reporter"] = display_df["reporter_id"].map(profile_names)
+            display_df["reporter"] = display_df["reporter"].fillna("Unknown")
+
+        # Add beneficiary information
+        if "beneficiary_id" in display_df.columns:
+            display_df["beneficiary"] = display_df["beneficiary_id"].map(profile_names)
+            # For shared expenses or when beneficiary is not set, show appropriate text
+            if "is_shared" in display_df.columns:
+                display_df.loc[display_df["is_shared"] == 1, "beneficiary"] = "Shared"
+            display_df["beneficiary"] = display_df["beneficiary"].fillna(
+                "Same as payer"
+            )
+
+    return display_df
 
 
 def summarize_expenses(
@@ -381,7 +407,7 @@ def create_split_expenses_summary(
     user_balances = {}
 
     # Process shared expenses
-    shared_expenses = expenses_df[expenses_df["is_shared"] == True].copy()
+    shared_expenses = expenses_df[expenses_df["is_shared"] is True].copy()
     if not shared_expenses.empty:
         # Calculate total shared expenses
         summary["total_shared"] = shared_expenses["amount"].sum()
@@ -404,7 +430,8 @@ def create_split_expenses_summary(
 
                     # Each participant owes their split amount
                     for participant_id, split_amount in split_amounts.items():
-                        # Convert keys from string to int if needed (JSON conversion issue)
+                        # Convert keys from string to int if needed (JSON conversion
+                        # issue)
                         user_id = (
                             int(participant_id)
                             if isinstance(participant_id, str)
@@ -449,7 +476,8 @@ def create_split_expenses_summary(
 
             # Fallback to the old method if split_amounts is not available
             else:
-                # Determine the number of participants - fallback to hardcoded 2 if not available
+                # Determine the number of participants - fallback to hardcoded 2
+                # if not available
                 split_count = expense.get("split_count", 2)
                 split_amount = amount / split_count
 
@@ -483,7 +511,7 @@ def create_split_expenses_summary(
 
     # Process non-shared expenses with different beneficiary and payer
     non_shared_expenses = expenses_df[
-        (expenses_df["is_shared"] == False)
+        (expenses_df["is_shared"] is False)
         & (expenses_df["beneficiary_id"] != expenses_df["payer_id"])
     ].copy()
 
@@ -537,45 +565,160 @@ def create_split_expenses_summary(
 
 
 def create_income_bar_chart(income_data: List[Dict[str, Any]]) -> go.Figure:
-    """Create a bar chart showing income by month.
-
-    Args:
-        income_data (List[Dict[str, Any]]): List of income records
-
-    Returns:
-        go.Figure: Plotly figure with income bar chart
-    """
+    """Create a bar chart of monthly income."""
     if not income_data:
-        return go.Figure()
+        # Create empty chart with message
+        fig = go.Figure()
+        fig.update_layout(title="No income data available")
+        return fig
 
     # Convert to DataFrame
     df = pd.DataFrame(income_data)
-
-    # Convert month_date to datetime and sort chronologically
     df["month_date"] = pd.to_datetime(df["month_date"])
     df = df.sort_values("month_date")
 
-    # Format month labels
-    month_labels = df["month_date"].dt.strftime("%b %Y")
+    # Format dates for display
+    df["month_display"] = df["month_date"].dt.strftime("%b %Y")
 
-    # Create bar chart
-    fig = go.Figure()
-
-    fig.add_trace(
+    # Create the chart
+    fig = go.Figure(
         go.Bar(
-            x=month_labels,
+            x=df["month_display"],
             y=df["amount"],
+            marker_color="#2ca02c",
             name="Monthly Income",
-            marker_color="#2E7D32",  # Green color
         )
     )
 
     fig.update_layout(
-        title="Monthly Income",
+        title="Monthly Income History",
         xaxis_title="Month",
         yaxis_title="Amount",
-        template="plotly_white",
-        xaxis=dict(tickangle=-45),
+        hovermode="x unified",
+    )
+
+    return fig
+
+
+def create_individual_expense_chart(
+    expenses_df: pd.DataFrame, categories: List[Dict[str, Any]]
+) -> go.Figure:
+    """Create a stacked bar chart of individual expenses by category per month.
+
+    This function takes expenses data from the expenses_split table and creates a
+    stacked bar chart showing how much was spent in each category per month.
+
+    Args:
+        expenses_df (pd.DataFrame): DataFrame of expenses with split_amount
+        categories (List[Dict[str, Any]]): List of categories
+
+    Returns:
+        go.Figure: Plotly figure with stacked bar chart
+    """
+    if expenses_df.empty:
+        # Create empty chart with message
+        fig = go.Figure()
+        fig.update_layout(title="No individual expense data available")
+        return fig
+
+    # Make a copy to avoid modifying the original
+    expenses = expenses_df.copy()
+
+    # Add month column for underlying data (YYYY-MM format)
+    expenses["month"] = pd.to_datetime(expenses["date"]).dt.strftime("%Y-%m")
+
+    # Add a display month column for better readability (e.g., Jan 2023)
+    expenses["display_month"] = pd.to_datetime(expenses["date"]).dt.strftime("%b %Y")
+
+    # Group by month and category
+    monthly_category_expenses = (
+        expenses.groupby(["month", "category_id"])["split_amount"].sum().reset_index()
+    )
+
+    # Get unique months and sort them
+    months = sorted(monthly_category_expenses["month"].unique())
+
+    # Create a mapping from YYYY-MM to display format (Month Year)
+    month_display_mapping = {}
+    for _, row in expenses.drop_duplicates("month").iterrows():
+        month_display_mapping[row["month"]] = row["display_month"]
+
+    # Limit to last 6 months if there are more than 6
+    if len(months) > 6:
+        months = months[-6:]
+        monthly_category_expenses = monthly_category_expenses[
+            monthly_category_expenses["month"].isin(months)
+        ]
+
+    # Create the figure
+    fig = go.Figure()
+
+    # Generate a color palette
+    default_colors = [
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+    ]
+
+    # Create a category ID to name mapping
+    {cat["id"]: cat["name"] for cat in categories}
+
+    # Add a trace for each category
+    for i, cat_id in enumerate(monthly_category_expenses["category_id"].unique()):
+        # Find the category object
+        cat_info = next((c for c in categories if c["id"] == cat_id), None)
+
+        if cat_info:
+            cat_name = cat_info["name"]
+            cat_color = cat_info.get("color", default_colors[i % len(default_colors)])
+        else:
+            cat_name = f"Category {cat_id}"
+            cat_color = default_colors[i % len(default_colors)]
+
+        # Filter data for this category
+        cat_data = monthly_category_expenses[
+            monthly_category_expenses["category_id"] == cat_id
+        ]
+
+        # Create a DataFrame with all months for this category
+        all_months_df = pd.DataFrame({"month": months})
+        cat_data_complete = all_months_df.merge(
+            cat_data, on="month", how="left"
+        ).fillna(0)
+
+        # Sort by month to ensure chronological order
+        cat_data_complete = cat_data_complete.sort_values("month")
+
+        # Map the months to their display format
+        display_months = [
+            month_display_mapping.get(m, m) for m in cat_data_complete["month"]
+        ]
+
+        # Add the trace with display months on x-axis
+        fig.add_trace(
+            go.Bar(
+                x=display_months,
+                y=cat_data_complete["split_amount"],
+                name=cat_name,
+                marker_color=cat_color,
+            )
+        )
+
+    # Configure the layout
+    fig.update_layout(
+        title="Last 6 Months of Individual Expenses by Category",
+        xaxis_title="Month",
+        yaxis_title="Amount",
+        barmode="stack",
+        hovermode="x unified",
+        legend_title="Categories",
     )
 
     return fig

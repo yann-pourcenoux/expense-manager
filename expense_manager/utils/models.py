@@ -5,7 +5,7 @@ throughout the application.
 """
 
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -17,7 +17,7 @@ class ExpenseCreate(BaseModel):
     """
 
     amount: float = Field(..., description="Amount of the expense", ge=0)
-    category_id: str = Field(..., description="ID of the expense category")
+    category_id: int = Field(..., description="ID of the expense category")
     date: datetime = Field(
         default_factory=datetime.now, description="Date of the expense"
     )
@@ -26,10 +26,13 @@ class ExpenseCreate(BaseModel):
     is_shared: bool = Field(
         False, description="Whether this expense is shared with others"
     )
-    split_with_users: List[str] = Field(
+    split_with_users: List[int] = Field(
         [], description="List of user IDs to split the expense with"
     )
-    payer_id: str = Field(..., description="ID of the user who paid for the expense")
+    payer_id: int = Field(..., description="ID of the user who paid for the expense")
+    beneficiary_id: Optional[int] = Field(
+        None, description="ID of the beneficiary user"
+    )
 
 
 class Expense(BaseModel):
@@ -38,11 +41,14 @@ class Expense(BaseModel):
     This model represents a complete expense record, including its ID and user ID.
     """
 
-    id: str = Field(..., description="Unique ID of the expense")
-    reporter_id: str = Field(..., description="ID of the user who created the expense")
-    payer_id: str = Field(..., description="ID of the user who paid for the expense")
+    id: int = Field(..., description="Unique ID of the expense")
+    reporter_id: int = Field(..., description="ID of the user who created the expense")
+    payer_id: int = Field(..., description="ID of the user who paid for the expense")
+    beneficiary_id: Optional[int] = Field(
+        None, description="ID of the beneficiary user"
+    )
     amount: float = Field(..., description="Amount of the expense")
-    category_id: str = Field(..., description="ID of the expense category")
+    category_id: int = Field(..., description="ID of the expense category")
     date: datetime = Field(..., description="Date of the expense")
     name: str = Field(..., description="Name of the expense")
     description: str = Field("", description="Description of the expense")
@@ -61,16 +67,18 @@ class ExpenseUpdate(BaseModel):
     """
 
     amount: float | None = Field(None, description="Amount of the expense", ge=0)
-    category_id: str | None = Field(None, description="ID of the expense category")
+    category_id: int | None = Field(None, description="ID of the expense category")
     date: datetime | None = Field(None, description="Date of the expense")
     name: str | None = Field(None, description="Name of the expense")
     description: str | None = Field(None, description="Description of the expense")
     is_shared: bool | None = Field(
         None, description="Whether this expense is shared with others"
     )
-    split_with_users: List[str] | None = Field(
+    split_with_users: List[int] | None = Field(
         None, description="List of user IDs to split the expense with"
     )
+    payer_id: int | None = Field(None, description="ID of the user who paid")
+    beneficiary_id: int | None = Field(None, description="ID of the beneficiary user")
 
 
 class Category(BaseModel):
@@ -79,9 +87,12 @@ class Category(BaseModel):
     This model represents a category that expenses can be classified under.
     """
 
-    id: str = Field(..., description="Unique ID of the category")
+    id: int = Field(..., description="Unique ID of the category")
     name: str = Field(..., description="Name of the category")
-    color: str = Field("#000000", description="Color representation for the category")
+    description: str = Field("", description="Description of the category")
+    created_at: datetime = Field(
+        ..., description="Timestamp of when the category was created"
+    )
 
 
 class CategoryCreate(BaseModel):
@@ -91,7 +102,7 @@ class CategoryCreate(BaseModel):
     """
 
     name: str = Field(..., description="Name of the category")
-    color: str = Field("#000000", description="Color representation for the category")
+    description: str = Field("", description="Description of the category")
 
 
 class User(BaseModel):
@@ -104,6 +115,20 @@ class User(BaseModel):
     email: EmailStr = Field(..., description="Email address of the user")
     created_at: datetime = Field(
         ..., description="Timestamp of when the user was created"
+    )
+
+
+class Profile(BaseModel):
+    """Model representing a user profile.
+
+    This model represents a user's profile in the system.
+    """
+
+    id: int = Field(..., description="Unique ID of the profile")
+    user_id: str = Field(..., description="ID of the user")
+    display_name: str = Field(..., description="Display name of the user")
+    created_at: datetime = Field(
+        ..., description="Timestamp of when the profile was created"
     )
 
 
@@ -126,9 +151,10 @@ class ExpenseSplit(BaseModel):
     This model represents how an expense is split between users.
     """
 
-    id: str = Field(..., description="Unique ID of the expense split")
-    expense_id: str = Field(..., description="ID of the expense being split")
-    user_id: str = Field(..., description="ID of the user participating in the split")
+    id: int = Field(..., description="Unique ID of the expense split")
+    expense_id: int = Field(..., description="ID of the expense being split")
+    user_id: int = Field(..., description="ID of the user participating in the split")
+    amount: float = Field(..., description="Amount of the split")
     created_at: datetime = Field(
         ..., description="Timestamp of when the split was created"
     )
@@ -140,8 +166,8 @@ class MonthlyIncome(BaseModel):
     This model represents a monthly income record for a user.
     """
 
-    id: str = Field(..., description="Unique ID of the income record")
-    user_id: str = Field(..., description="ID of the user")
+    id: int = Field(..., description="Unique ID of the income record")
+    user_id: int = Field(..., description="ID of the user")
     amount: float = Field(..., description="Income amount")
     month_date: datetime = Field(
         ..., description="First day of the month this income applies to"

@@ -1,23 +1,26 @@
 # Expense Manager
 
-A Streamlit web application for managing personal expenses with Supabase integration.
+A Streamlit web application for managing personal expenses.
 
 ## Features
 
-- **User Authentication**: Sign up and log in securely with Supabase authentication
+- **User Authentication**: Sign up and log in securely
 - **Expense Tracking**: Add, edit, and delete expense records
 - **Categorization**: Organize expenses by custom categories
+- **Shared Expenses Dashboard**: View household shared expenses in a stacked bar chart by category for the last 6 months
 - **Visualization**: View expense trends and breakdowns with interactive charts
 - **Data Analysis**: Analyze spending patterns over time
 - **Responsive Interface**: Built with Streamlit for a clean, responsive UI
+- **Multiple Configurations**: Run development and production instances with different configuration profiles
 
 ## Requirements
 
 - Python 3.12+
 - Streamlit 1.27+
-- Supabase Python SDK 1.0.3+
 - Pandas 2.0+
 - Plotly 5.14+
+- PyYAML 6.0+
+- SQLite (included in Python standard library)
 
 ## Installation
 
@@ -32,72 +35,50 @@ A Streamlit web application for managing personal expenses with Supabase integra
    pip install -e .
    ```
 
-3. Create a `.env` file in the root directory with your Supabase credentials:
-   ```
-   SUPABASE_URL=your_supabase_url
-   SUPABASE_KEY=your_supabase_key
-   SUPABASE_SERVICE_KEY=your_supabase_service_key
-   ```
+## Configuration Profiles
 
-## Supabase Setup
+The application uses YAML configuration files to customize settings like database path and server port. Configuration files are stored in the `config/` directory.
 
-1. Create a new project on [Supabase](https://supabase.com/)
-2. Enable Auth with email/password provider
-3. Create the following tables in the SQL editor:
+### Available Profiles
 
-```sql
--- Create expenses table
-CREATE TABLE expenses (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  amount DECIMAL(10, 2) NOT NULL,
-  category_id UUID NOT NULL REFERENCES categories(id),
-  date TIMESTAMP WITH TIME ZONE NOT NULL,
-  description TEXT,
-  payment_method TEXT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
-);
+- `development.yaml`: Development configuration with port 8502
+- `production.yaml`: Production configuration with port 8501
 
--- Create categories table
-CREATE TABLE categories (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name TEXT NOT NULL,
-  color TEXT NOT NULL DEFAULT '#000000',
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
-);
-
--- Initial categories
-INSERT INTO categories (name, color) VALUES
-  ('Food & Dining', '#FF9800'),
-  ('Transportation', '#2196F3'),
-  ('Housing', '#4CAF50'),
-  ('Entertainment', '#9C27B0'),
-  ('Shopping', '#F44336'),
-  ('Utilities', '#607D8B'),
-  ('Healthcare', '#E91E63'),
-  ('Travel', '#3F51B5'),
-  ('Education', '#009688'),
-  ('Miscellaneous', '#795548');
-
--- Access policies for security
-ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can only access their own expenses" ON expenses
-  FOR ALL USING (auth.uid() = user_id);
-
--- Allow public access to categories
-ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Categories are viewable by everyone" ON categories
-  FOR SELECT USING (true);
-```
-
-4. Copy your Supabase URL and anon key to the `.env` file
+The app uses the development profile by default.
 
 ## Running the Application
 
-Run the Streamlit app:
+Run the Streamlit app with a simple command:
 
 ```
-streamlit run expense_manager/app.py
+# Run with development profile (default)
+run
+
+# Run with development profile (explicitly)
+run dev
+
+# Run with production profile
+run prod
+```
+
+Alternatively, you can use the run_app.py script:
+
+```
+# Run with development profile
+./run_app.py --profile development
+
+# Run with production profile
+./run_app.py --profile production
+```
+
+You can run multiple instances simultaneously with different profiles:
+
+```
+# Terminal 1 - Development instance on port 8502
+run
+
+# Terminal 2 - Production instance on port 8501
+run prod
 ```
 
 ## Development

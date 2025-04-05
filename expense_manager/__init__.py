@@ -13,6 +13,7 @@ from expense_manager.utils.models import (
     ExpenseCreate,
     ExpenseSummary,
     ExpenseUpdate,
+    Profile,
     User,
 )
 
@@ -26,5 +27,6 @@ __all__ = [
     "Category",
     "CategoryCreate",
     "User",
+    "Profile",
     "ExpenseSummary",
 ]
