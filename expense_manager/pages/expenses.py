@@ -91,20 +91,17 @@ def display_add_expense_form(db_manager: DatabaseManager, profile_id: int) -> No
     """
     st.header("Add New Expense")
 
-    # Initialize session state for form fields if not exists
-    if "expense_form" not in st.session_state:
-        st.session_state.expense_form = {
-            "name": "",
-            "date": datetime.now(),
-            "amount": None,
-            "description": "",
-            "is_shared": False,
-            "selected_profiles": [],
-        }
-
     # Get categories for dropdown
     categories_result = db_manager.get_categories()
     categories = categories_result.get("categories", [])
+
+    # Get payment sources for dropdown
+    payment_sources_result = db_manager.get_payment_sources(
+        st.session_state.user.id
+        if hasattr(st.session_state.user, "id")
+        else st.session_state.user["id"]
+    )
+    payment_sources = payment_sources_result.get("payment_sources", [])
 
     if not categories:
         st.warning("No categories found. Please create categories first.")
@@ -127,8 +124,37 @@ def display_add_expense_form(db_manager: DatabaseManager, profile_id: int) -> No
 
         return
 
+    if not payment_sources:
+        st.warning("No payment sources found. Please add payment sources first.")
+        return
+
     # Get category names for the dropdown
     category_options = {cat["name"]: cat["id"] for cat in categories}
+
+    # Get payment source names for the dropdown
+    payment_source_options = {ps["name"]: ps["id"] for ps in payment_sources}
+
+    # Get user's profile to check favorite payment source
+    profile_result = db_manager.get_profile(
+        st.session_state.user.id
+        if hasattr(st.session_state.user, "id")
+        else st.session_state.user["id"]
+    )
+    profile = profile_result.get("profile", {})
+
+    # Find default payment source name
+    default_payment_source_name = None
+    if profile.get("favorite_payment_source_id"):
+        default_source = next(
+            (
+                ps
+                for ps in payment_sources
+                if ps["id"] == profile["favorite_payment_source_id"]
+            ),
+            None,
+        )
+        if default_source:
+            default_payment_source_name = default_source["name"]
 
     # Get all profiles for payer selection
     profiles_result = db_manager.get_all_profiles()
@@ -177,56 +203,87 @@ def display_add_expense_form(db_manager: DatabaseManager, profile_id: int) -> No
     # Default to the current user for beneficiary (as is common)
     beneficiary_default_index = default_index if current_user_option else 0
 
-    with st.form("add_expense_form"):
+    with st.form("add_expense_form", clear_on_submit=True):
         # Name - now required
-        name = st.text_input("Name", value=st.session_state.expense_form["name"])
+        name = st.text_input("Name", value="", help="What is this expense for?")
 
-        # Date
-        date = st.date_input("Date", value=st.session_state.expense_form["date"])
+        col1, col2 = st.columns(2)
+        with col1:
+            # Date
+            date = st.date_input(
+                "Date", value=datetime.now(), help="When did this expense happen?"
+            )
 
-        # Category
-        category_name = st.selectbox("Category", options=list(category_options.keys()))
-        category_id = category_options[category_name]
+        with col2:
+            # Category
+            category_name = st.selectbox(
+                "Category",
+                options=list(category_options.keys()),
+                index=0,
+                help="What category does this expense belong to?",
+            )
+            category_id = category_options[category_name]
 
-        # Amount
-        amount = st.number_input(
-            "Amount",
-            min_value=1,
-            format="%.2f",
-            value=st.session_state.expense_form["amount"],
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            # Amount
+            amount = st.number_input(
+                "Amount",
+                min_value=1.0,
+                format="%.2f",
+                value=1.0,
+                help="How much did this expense cost?",
+            )
+
+        with col2:
+            # Payment source
+            payment_source = st.selectbox(
+                "Payment Source",
+                options=list(payment_source_options.keys()),
+                index=list(payment_source_options.keys()).index(
+                    default_payment_source_name
+                )
+                if default_payment_source_name
+                else 0,
+                help="How was this expense paid?",
+            )
 
         # Description
         description = st.text_area(
-            "Description (Optional)", value=st.session_state.expense_form["description"]
+            "Description (Optional)",
+            value="",
+            help="Any additional information about this expense?",
         )
 
-        selected_payer = st.selectbox(
-            "Payer",
-            options=payer_option_list,
-            index=default_index,
-            help="Select who paid for this expense",
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_payer = st.selectbox(
+                "Payer",
+                options=payer_option_list,
+                index=default_index,
+                help="Who paid for this expense?",
+            )
+            payer_id = payer_options[selected_payer]
 
-        payer_id = payer_options[selected_payer]
+        with col2:
+            # Beneficiary selection (always shown)
+            selected_beneficiary = st.selectbox(
+                "Beneficiary",
+                options=beneficiary_option_list,
+                index=beneficiary_default_index,
+                help=(
+                    "Who this expense is for (who benefits from it).",
+                    "Does not matter if the expense is shared.",
+                ),
+            )
+            beneficiary_id = payer_options[selected_beneficiary]
 
-        # Expense sharing - MOVED BACK INSIDE THE FORM
+        # Expense sharing
         is_shared = st.checkbox(
             "Split this expense with others",
-            value=st.session_state.expense_form["is_shared"],
-            help="Check this if the expense should be split with others",
+            value=False,
+            help="Is the expense to be shared with the household members?",
         )
-
-        # Beneficiary selection (always shown)
-        selected_beneficiary = st.selectbox(
-            "Beneficiary (who is this expense for?)",
-            options=beneficiary_option_list,
-            index=beneficiary_default_index,
-            help="Select who this expense is for (who benefits from it)",
-        )
-
-        # Get the beneficiary ID safely
-        beneficiary_id = payer_options[selected_beneficiary]
 
         # Submit button
         submitted = st.form_submit_button("Add Expense")
@@ -240,14 +297,12 @@ def display_add_expense_form(db_manager: DatabaseManager, profile_id: int) -> No
             # Convert date input to datetime
             expense_date = datetime.combine(date, datetime.min.time())
 
-            # Update session state when the form is submitted
-            st.session_state.expense_form["is_shared"] = is_shared
-
             # Create expense record
             result = db_manager.add_expense(
                 reporter_id=profile_id,
                 amount=amount,
                 category_id=str(category_id),
+                payment_source_id=payment_source_options[payment_source],
                 date=expense_date,
                 name=name,
                 payer_id=payer_id,
@@ -256,14 +311,6 @@ def display_add_expense_form(db_manager: DatabaseManager, profile_id: int) -> No
                 beneficiary_id=beneficiary_id if not is_shared else None,
             )
 
-            # Reset form fields to defaults
-            st.session_state.expense_form = {
-                "name": "",
-                "date": datetime.now(),
-                "amount": None,
-                "description": "",
-                "is_shared": False,
-            }
             st.success("Expense added successfully!")
 
 
@@ -314,6 +361,15 @@ def display_expense_list(db_manager: DatabaseManager, profile_id: int) -> None:
     categories = categories_result.get("categories", [])
     category_map = {cat["id"]: cat["name"] for cat in categories}
 
+    # Get payment sources for display
+    payment_sources_result = db_manager.get_payment_sources(
+        st.session_state.user.id
+        if hasattr(st.session_state.user, "id")
+        else st.session_state.user["id"]
+    )
+    payment_sources = payment_sources_result.get("payment_sources", [])
+    payment_source_map = {ps["id"]: ps["name"] for ps in payment_sources}
+
     # Get all profiles for display in expense list
     profiles_result = db_manager.get_all_profiles()
     profiles = profiles_result.get("profiles", [])
@@ -323,6 +379,12 @@ def display_expense_list(db_manager: DatabaseManager, profile_id: int) -> None:
 
     # Create a DataFrame with all formatting applied
     display_df = prepare_expense_data(expenses, profile_names, category_map)
+
+    # Add payment source column
+    display_df["payment_source"] = [
+        payment_source_map.get(exp.get("payment_source_id"), "Not specified")
+        for exp in expenses
+    ]
 
     # Format date for display (keep this here as it's specific to the display
     # in this view)
@@ -340,6 +402,7 @@ def display_expense_list(db_manager: DatabaseManager, profile_id: int) -> None:
         "category",
         "name",
         "amount",
+        "payment_source",
         "description",
         "shared",
         "payer",
@@ -356,10 +419,15 @@ def display_expense_list(db_manager: DatabaseManager, profile_id: int) -> None:
 
     # Select expense to delete
     expense_options = {}
+
+    # Create descriptive labels for each expense
     for i, exp in enumerate(expenses):
         date_str = pd.to_datetime(exp["date"]).strftime("%Y-%m-%d")
         category_name = category_map.get(exp["category_id"], "Unknown")
         amount_str = format_currency(exp["amount"])
+        payment_source_name = payment_source_map.get(
+            exp.get("payment_source_id"), "Not specified"
+        )
 
         # Create a descriptive label
         label = f"{date_str} - {category_name} - {amount_str}"
@@ -369,6 +437,9 @@ def display_expense_list(db_manager: DatabaseManager, profile_id: int) -> None:
             label = f"{label} - {exp['name']}"
         elif exp.get("description"):
             label += f" - {exp['description'][:20]}..."
+
+        # Add payment source
+        label += f" (Paid with: {payment_source_name})"
 
         if exp.get("is_shared") == 1:
             label += " (Shared)"

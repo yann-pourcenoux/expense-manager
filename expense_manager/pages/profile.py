@@ -99,6 +99,10 @@ def display_profile_manager() -> None:
 
     profile = profile_result.get("profile", {})
 
+    # Get payment sources for dropdown
+    payment_sources_result = db_manager.get_payment_sources(user_id)
+    payment_sources = payment_sources_result.get("payment_sources", [])
+
     # Show current profile info
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -111,6 +115,23 @@ def display_profile_manager() -> None:
         )
         st.write(f"Email: {email}")
 
+        # Show current favorite payment source if set
+        if profile.get("favorite_payment_source_id"):
+            payment_source = next(
+                (
+                    ps
+                    for ps in payment_sources
+                    if ps["id"] == profile["favorite_payment_source_id"]
+                ),
+                None,
+            )
+            if payment_source:
+                st.write(f"Favorite Payment Source: {payment_source['name']}")
+            else:
+                st.write("Favorite Payment Source: Not found")
+        else:
+            st.write("Favorite Payment Source: Not set")
+
     # Edit profile form
     st.subheader("Edit Profile")
     with st.form("edit_profile_form"):
@@ -120,7 +141,30 @@ def display_profile_manager() -> None:
             help="This is how you'll appear to others on the platform",
         )
 
-        # Add additional profile fields as needed
+        # Add payment source selection
+        payment_source_options = {ps["name"]: ps["id"] for ps in payment_sources}
+        payment_source_options["None"] = None
+
+        # Find current favorite payment source name
+        current_favorite_name = "None"
+        if profile.get("favorite_payment_source_id"):
+            current_source = next(
+                (
+                    ps
+                    for ps in payment_sources
+                    if ps["id"] == profile["favorite_payment_source_id"]
+                ),
+                None,
+            )
+            if current_source:
+                current_favorite_name = current_source["name"]
+
+        selected_payment_source = st.selectbox(
+            "Favorite Payment Source",
+            options=list(payment_source_options.keys()),
+            index=list(payment_source_options.keys()).index(current_favorite_name),
+            help="This payment source will be selected by default when adding expenses",
+        )
 
         submit_button = st.form_submit_button("Update Profile")
 
@@ -130,7 +174,11 @@ def display_profile_manager() -> None:
             else:
                 with st.spinner("Updating profile..."):
                     # Update profile
-                    result = db_manager.update_profile(user_id, new_display_name)
+                    result = db_manager.update_profile(
+                        user_id,
+                        new_display_name,
+                        payment_source_options[selected_payment_source],
+                    )
 
                     if result.get("error"):
                         st.error(f"Failed to update profile: {result['error']}")
