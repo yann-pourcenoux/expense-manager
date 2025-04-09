@@ -5,7 +5,7 @@ throughout the application.
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -16,45 +16,33 @@ class ExpenseCreate(BaseModel):
     This model validates the data required to create a new expense.
     """
 
-    amount: float = Field(..., description="Amount of the expense", ge=0)
-    category_id: int = Field(..., description="ID of the expense category")
-    date: datetime = Field(
-        default_factory=datetime.now, description="Date of the expense"
-    )
-    name: str = Field(..., description="Name of the expense")
+    amount: float = Field(..., description="Amount of the expense")
+    category_id: int = Field(..., description="ID of the category")
+    payment_source_id: int = Field(..., description="ID of the payment source")
+    date: datetime = Field(..., description="Date of the expense")
+    name: str = Field("", description="Name of the expense")
     description: str = Field("", description="Description of the expense")
-    is_shared: bool = Field(
-        False, description="Whether this expense is shared with others"
-    )
-    split_with_users: List[int] = Field(
-        [], description="List of user IDs to split the expense with"
-    )
-    payer_id: int = Field(..., description="ID of the user who paid for the expense")
-    beneficiary_id: Optional[int] = Field(
-        None, description="ID of the beneficiary user"
-    )
+    payer_id: int = Field(..., description="ID of the profile who paid")
+    beneficiary_id: int | None = Field(None, description="ID of the beneficiary")
+    is_shared: bool = Field(False, description="Whether this is a shared expense")
 
 
 class Expense(BaseModel):
     """Model representing an expense.
 
-    This model represents a complete expense record, including its ID and user ID.
+    This model represents an expense in the system.
     """
 
     id: int = Field(..., description="Unique ID of the expense")
-    reporter_id: int = Field(..., description="ID of the user who created the expense")
-    payer_id: int = Field(..., description="ID of the user who paid for the expense")
-    beneficiary_id: Optional[int] = Field(
-        None, description="ID of the beneficiary user"
-    )
     amount: float = Field(..., description="Amount of the expense")
-    category_id: int = Field(..., description="ID of the expense category")
+    category_id: int = Field(..., description="ID of the category")
+    payment_source_id: int = Field(..., description="ID of the payment source")
     date: datetime = Field(..., description="Date of the expense")
-    name: str = Field(..., description="Name of the expense")
+    name: str = Field("", description="Name of the expense")
     description: str = Field("", description="Description of the expense")
-    is_shared: bool = Field(
-        False, description="Whether this expense is shared with others"
-    )
+    payer_id: int = Field(..., description="ID of the profile who paid")
+    beneficiary_id: int | None = Field(None, description="ID of the beneficiary")
+    is_shared: bool = Field(False, description="Whether this is a shared expense")
     created_at: datetime = Field(
         ..., description="Timestamp of when the expense was created"
     )
@@ -187,6 +175,20 @@ class MonthlyIncomeCreate(BaseModel):
     month_date: datetime = Field(
         default_factory=lambda: datetime.now().replace(day=1),
         description="Month this income applies to (will be set to 1st day of month)",
+    )
+
+
+class PaymentSource(BaseModel):
+    """Model representing a payment source.
+
+    This model represents a payment source that can be used for expenses.
+    """
+
+    id: int = Field(..., description="Unique ID of the payment source")
+    name: str = Field(..., description="Name of the payment source")
+    user_id: str = Field(..., description="ID of the user who owns this payment source")
+    created_at: datetime = Field(
+        ..., description="Timestamp of when the payment source was created"
     )
 
 

@@ -18,6 +18,7 @@ from expense_manager.pages.dashboard import (
 from expense_manager.pages.expenses import display_expense_manager
 from expense_manager.pages.flow import display_flow_page
 from expense_manager.pages.income import display_income_manager
+from expense_manager.pages.payment_sources import display_payment_source_manager
 from expense_manager.pages.profile import (
     display_profile_manager,
     display_profile_setup,
@@ -230,6 +231,13 @@ def display_main_app() -> None:
         )
 
         st.sidebar.button(
+            "💳 Payment Sources",
+            key="nav_payment_sources",
+            use_container_width=True,
+            on_click=lambda: set_current_page("Payment Sources"),
+        )
+
+        st.sidebar.button(
             "👤 Profile",
             key="nav_profile",
             use_container_width=True,
@@ -256,6 +264,8 @@ def display_main_app() -> None:
         display_flow_page()
     elif st.session_state.current_page == "Categories":
         display_category_manager()
+    elif st.session_state.current_page == "Payment Sources":
+        display_payment_source_manager()
     elif st.session_state.current_page == "Profile":
         display_profile_manager()
 

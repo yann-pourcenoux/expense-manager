@@ -45,6 +45,7 @@ class DatabaseManager:
         self.expenses_split_table = "expenses_split"
         self.monthly_income_table = "monthly_income"
         self.users_table = "users"
+        self.payment_sources_table = "payment_sources"
 
         # Create tables if they don't exist
         self._create_tables()
@@ -73,11 +74,23 @@ class DatabaseManager:
                     "id": int,
                     "user_id": str,
                     "display_name": str,
+                    "favorite_payment_source_id": int,  # References payment_sources.id
                     "created_at": str,
                 },
                 pk="id",
             )
             self.db[self.profiles_table].create_index(["user_id"], unique=True)
+        else:
+            # Check if favorite_payment_source_id column exists in profiles table
+            conn = self.db.conn
+            cursor = conn.execute(f"PRAGMA table_info({self.profiles_table})")
+            columns = [row[1] for row in cursor.fetchall()]
+            if "favorite_payment_source_id" not in columns:
+                conn.execute(
+                    f"ALTER TABLE {self.profiles_table} "
+                    + "ADD COLUMN favorite_payment_source_id "
+                    + "INTEGER REFERENCES {self.payment_sources_table}(id)"
+                )
 
         # Create categories table
         if self.categories_table not in self.db.table_names():
@@ -144,6 +157,32 @@ class DatabaseManager:
                 ["user_id", "month_date"], unique=True
             )
 
+        # Create payment sources table
+        if self.payment_sources_table not in self.db.table_names():
+            self.db.create_table(
+                self.payment_sources_table,
+                {
+                    "id": int,
+                    "name": str,
+                    "user_id": str,  # References users.id
+                    "created_at": str,
+                },
+                pk="id",
+            )
+            self.db[self.payment_sources_table].create_index(
+                ["name", "user_id"], unique=True
+            )
+
+        # Add payment_source_id to expenses if not exists
+        conn = self.db.conn
+        cursor = conn.execute(f"PRAGMA table_info({self.expenses_table})")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "payment_source_id" not in columns:
+            conn.execute(
+                f"ALTER TABLE {self.expenses_table} ADD COLUMN payment_source_id "
+                + " INTEGER REFERENCES {self.payment_sources_table}(id)"
+            )
+
     def add_expense(
         self,
         reporter_id: int,
@@ -155,6 +194,7 @@ class DatabaseManager:
         description: str = "",
         is_shared: bool = False,
         beneficiary_id: Optional[int] = None,
+        payment_source_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Add a new expense to the database."""
         # 1. Create the expense
@@ -168,6 +208,7 @@ class DatabaseManager:
             "description": description,
             "is_shared": 1 if is_shared else 0,
             "beneficiary_id": beneficiary_id,
+            "payment_source_id": payment_source_id,
             "created_at": datetime.now().isoformat(),
         }
 
@@ -670,7 +711,12 @@ class DatabaseManager:
         else:
             return {"profile": None}
 
-    def update_profile(self, user_id: str, display_name: str) -> Dict[str, Any]:
+    def update_profile(
+        self,
+        user_id: str,
+        display_name: str,
+        favorite_payment_source_id: int | None = None,
+    ) -> Dict[str, Any]:
         """Update a user's profile."""
         # Get the profile ID
         profile_result = self.get_profile(user_id)
@@ -681,7 +727,11 @@ class DatabaseManager:
         profile_id = profile_result["profile"]["id"]
 
         # Update the profile
-        self.db[self.profiles_table].update(profile_id, {"display_name": display_name})
+        update_data = {"display_name": display_name}
+        if favorite_payment_source_id is not None:
+            update_data["favorite_payment_source_id"] = favorite_payment_source_id
+
+        self.db[self.profiles_table].update(profile_id, update_data)
 
         # Return updated profile
         updated_profile = self.db[self.profiles_table].get(profile_id)
@@ -787,3 +837,93 @@ class DatabaseManager:
         expenses = [dict(zip(column_names, row)) for row in rows]
 
         return expenses
+
+    def create_payment_source(self, name: str, user_id: str) -> Dict[str, Any]:
+        """Create a new payment source."""
+        payment_source_data = {
+            "name": name,
+            "user_id": user_id,
+            "created_at": datetime.now().isoformat(),
+        }
+
+        try:
+            payment_source_id = (
+                self.db[self.payment_sources_table].insert(payment_source_data).last_pk
+            )
+            payment_source = self.db[self.payment_sources_table].get(payment_source_id)
+
+            if not payment_source:
+                return {"error": "Failed to create payment source"}
+
+            return {"payment_source": payment_source}
+        except sqlite3.IntegrityError:
+            return {
+                "error": "Payment source with this name already exists for this user"
+            }
+
+    def get_payment_sources(self, user_id: str) -> Dict[str, Any]:
+        """Get all payment sources for a user."""
+        conn = self.db.conn
+        query = (
+            f"SELECT * FROM {self.payment_sources_table} "
+            + "WHERE user_id = ? ORDER BY name"
+        )
+        cursor = conn.execute(query, [user_id])
+        rows = cursor.fetchall()
+
+        # Convert to dictionaries
+        column_names = [desc[0] for desc in cursor.description]
+        payment_sources = [dict(zip(column_names, row)) for row in rows]
+
+        return {"payment_sources": payment_sources}
+
+    def update_payment_source(
+        self, payment_source_id: int, name: str
+    ) -> Dict[str, Any]:
+        """Update a payment source's name."""
+        # Check if payment source exists
+        payment_source = self.db[self.payment_sources_table].get(payment_source_id)
+
+        if not payment_source:
+            return {"error": "Payment source not found"}
+
+        try:
+            # Update payment source
+            self.db[self.payment_sources_table].update(
+                payment_source_id, {"name": name}
+            )
+
+            # Return updated payment source
+            updated_payment_source = self.db[self.payment_sources_table].get(
+                payment_source_id
+            )
+            return {"payment_source": updated_payment_source}
+        except sqlite3.IntegrityError:
+            return {
+                "error": "Payment source with this name already exists for this user"
+            }
+
+    def delete_payment_source(self, payment_source_id: int) -> Dict[str, Any]:
+        """Delete a payment source if it's not in use."""
+        # Check if payment source exists
+        payment_source = self.db[self.payment_sources_table].get(payment_source_id)
+
+        if not payment_source:
+            return {"error": "Payment source not found"}
+
+        # Check if payment source is in use
+        conn = self.db.conn
+        query = (
+            f"SELECT COUNT(*) FROM {self.expenses_table} WHERE payment_source_id = ?"
+        )
+        cursor = conn.execute(query, [payment_source_id])
+        count = cursor.fetchone()[0]
+
+        if count > 0:
+            return {
+                "error": f"Can't delete payment source. It is used by {count} expenses."
+            }
+
+        # Delete the payment source
+        self.db[self.payment_sources_table].delete(payment_source_id)
+        return {"success": True}
