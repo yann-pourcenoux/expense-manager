@@ -23,6 +23,7 @@ from expense_manager.pages.profile import (
     display_profile_manager,
     display_profile_setup,
 )
+from expense_manager.pages.transfers import display_transfer_manager
 
 # Global variables for managers
 auth_manager = None
@@ -217,6 +218,13 @@ def display_main_app() -> None:
         )
 
         st.sidebar.button(
+            "💸 Transfers",
+            key="nav_transfers",
+            use_container_width=True,
+            on_click=lambda: set_current_page("Transfers"),
+        )
+
+        st.sidebar.button(
             "📊 Flow",
             key="nav_flow",
             use_container_width=True,
@@ -260,6 +268,8 @@ def display_main_app() -> None:
         display_expense_manager()
     elif st.session_state.current_page == "Income":
         display_income_manager()
+    elif st.session_state.current_page == "Transfers":
+        display_transfer_manager()
     elif st.session_state.current_page == "Flow":
         display_flow_page()
     elif st.session_state.current_page == "Categories":

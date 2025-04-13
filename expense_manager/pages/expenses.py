@@ -272,8 +272,8 @@ def display_add_expense_form(db_manager: DatabaseManager, profile_id: int) -> No
                 options=beneficiary_option_list,
                 index=beneficiary_default_index,
                 help=(
-                    "Who this expense is for (who benefits from it).",
-                    "Does not matter if the expense is shared.",
+                    "Who this expense is for (who benefits from it). "
+                    "Does not matter if the expense is shared."
                 ),
             )
             beneficiary_id = payer_options[selected_beneficiary]
@@ -521,7 +521,38 @@ def display_user_balances(db_manager: DatabaseManager, profile_id: int) -> None:
     )
     non_shared_you_owe = you_owe - paid_by_you
 
-    total_you_owe = shared_you_owe + non_shared_you_owe
+    # Get transfers
+    today = datetime.now()
+    six_months_ago = today - timedelta(days=180)
+    start_date = six_months_ago.strftime("%Y-%m-%d")
+    end_date = today.strftime("%Y-%m-%d")
+
+    transfers_result = db_manager.get_transfers(profile_id, start_date, end_date)
+    if "error" in transfers_result:
+        st.error(f"Error getting transfers: {transfers_result['error']}")
+        return
+
+    transfers = transfers_result.get("transfers", [])
+
+    # Calculate transfer amounts
+    transfers_sent = sum(
+        [
+            transfer["amount"]
+            for transfer in transfers
+            if transfer["source_id"] == profile_id
+        ]
+    )
+    transfers_received = sum(
+        [
+            transfer["amount"]
+            for transfer in transfers
+            if transfer["beneficiary_id"] == profile_id
+        ]
+    )
+    transfer_balance = transfers_received - transfers_sent
+
+    # Calculate total balance including transfers
+    total_you_owe = shared_you_owe + non_shared_you_owe + transfer_balance
 
     # Display summary statistics
     # Row 1: Total shared expenses and your contribution
@@ -541,7 +572,14 @@ def display_user_balances(db_manager: DatabaseManager, profile_id: int) -> None:
     with row2_col2:
         st.metric("Your household partner paid for you", format_currency(you_owe))
 
-    # Row 3: Summary of who owes whom
+    # Row 3: Transfers
+    row3_col1, row3_col2 = st.columns(2)
+    with row3_col1:
+        st.metric("Transfers you sent", format_currency(transfers_sent))
+    with row3_col2:
+        st.metric("Transfers you received", format_currency(transfers_received))
+
+    # Row 4: Summary of who owes whom
     st.write("")  # Add some space between rows
     if total_you_owe > 0:
         st.metric("🔴 You owe your household partner", format_currency(total_you_owe))
