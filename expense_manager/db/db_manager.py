@@ -199,7 +199,7 @@ class DatabaseManager:
         if "payment_source_id" not in columns:
             conn.execute(
                 f"ALTER TABLE {self.expenses_table} ADD COLUMN payment_source_id "
-                + " INTEGER REFERENCES {self.payment_sources_table}(id)"
+                + f" INTEGER REFERENCES {self.payment_sources_table}(id)"
             )
 
         # Add date field to transfers if not exists
