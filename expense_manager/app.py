@@ -11,6 +11,7 @@ import streamlit as st
 from expense_manager.auth.auth_manager import AuthManager
 from expense_manager.config import load_config
 from expense_manager.db.db_manager import DatabaseManager
+from expense_manager.pages.balances import display_user_balances
 from expense_manager.pages.categories import display_category_manager
 from expense_manager.pages.dashboard import (
     display_dashboard,
@@ -225,6 +226,13 @@ def display_main_app() -> None:
         )
 
         st.sidebar.button(
+            "⚖️ Balances",
+            key="nav_balances",
+            use_container_width=True,
+            on_click=lambda: set_current_page("Balances"),
+        )
+
+        st.sidebar.button(
             "📊 Flow",
             key="nav_flow",
             use_container_width=True,
@@ -270,6 +278,8 @@ def display_main_app() -> None:
         display_income_manager()
     elif st.session_state.current_page == "Transfers":
         display_transfer_manager()
+    elif st.session_state.current_page == "Balances":
+        display_user_balances()
     elif st.session_state.current_page == "Flow":
         display_flow_page()
     elif st.session_state.current_page == "Categories":

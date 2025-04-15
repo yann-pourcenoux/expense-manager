@@ -183,12 +183,14 @@ class DatabaseManager:
                     "source_id": int,  # References profiles.id
                     "beneficiary_id": int,  # References profiles.id
                     "amount": float,
+                    "date": str,  # Date of the transfer
                     "created_at": str,
                 },
                 pk="id",
             )
             self.db[self.transfers_table].create_index(["source_id", "beneficiary_id"])
             self.db[self.transfers_table].create_index(["created_at"])
+            self.db[self.transfers_table].create_index(["date"])
 
         # Add payment_source_id to expenses if not exists
         conn = self.db.conn
@@ -199,6 +201,14 @@ class DatabaseManager:
                 f"ALTER TABLE {self.expenses_table} ADD COLUMN payment_source_id "
                 + " INTEGER REFERENCES {self.payment_sources_table}(id)"
             )
+
+        # Add date field to transfers if not exists
+        cursor = conn.execute(f"PRAGMA table_info({self.transfers_table})")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "date" not in columns:
+            conn.execute(f"ALTER TABLE {self.transfers_table} ADD COLUMN date TEXT")
+            # Set date to created_at for existing records
+            conn.execute(f"UPDATE {self.transfers_table} SET date = created_at")
 
     def add_expense(
         self,
@@ -946,7 +956,7 @@ class DatabaseManager:
         return {"success": True}
 
     def create_transfer(
-        self, source_id: int, beneficiary_id: int, amount: float
+        self, source_id: int, beneficiary_id: int, amount: float, date: datetime
     ) -> Dict[str, Any]:
         """Create a new transfer between users.
 
@@ -954,6 +964,7 @@ class DatabaseManager:
             source_id (int): ID of the user sending the money
             beneficiary_id (int): ID of the user receiving the money
             amount (float): Amount of money to transfer
+            date (datetime): Date of the transfer. Defaults to current time.
 
         Returns:
             Dict[str, Any]: Dict containing the created transfer or error message
@@ -970,6 +981,7 @@ class DatabaseManager:
             "source_id": source_id,
             "beneficiary_id": beneficiary_id,
             "amount": amount,
+            "date": date.isoformat(),
             "created_at": datetime.now().isoformat(),
         }
 
@@ -984,12 +996,7 @@ class DatabaseManager:
         except Exception as e:
             return {"error": str(e)}
 
-    def get_transfers(
-        self,
-        user_id: int,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    def get_transfers(self) -> Dict[str, Any]:
         """Get all transfers involving a user.
 
         Args:
@@ -1003,25 +1010,8 @@ class DatabaseManager:
         conn = self.db.conn
 
         # Build query
-        query = f"""
-        SELECT t.*,
-               ps.display_name as source_name,
-               pb.display_name as beneficiary_name
-        FROM {self.transfers_table} t
-        JOIN {self.profiles_table} ps ON t.source_id = ps.id
-        JOIN {self.profiles_table} pb ON t.beneficiary_id = pb.id
-        WHERE t.source_id = :user_id OR t.beneficiary_id = :user_id
-        """
-        params = {"user_id": user_id}
-
-        if start_date:
-            query += " AND t.created_at >= :start_date"
-            params["start_date"] = start_date
-        if end_date:
-            query += " AND t.created_at <= :end_date"
-            params["end_date"] = end_date
-
-        query += " ORDER BY t.created_at DESC"
+        query = f"SELECT * FROM {self.transfers_table}"
+        params = {}
 
         cursor = conn.execute(query, params)
         rows = cursor.fetchall()
