@@ -46,6 +46,7 @@ class DatabaseManager:
         self.monthly_income_table = "monthly_income"
         self.users_table = "users"
         self.payment_sources_table = "payment_sources"
+        self.transfers_table = "transfers"
 
         # Create tables if they don't exist
         self._create_tables()
@@ -173,6 +174,24 @@ class DatabaseManager:
                 ["name", "user_id"], unique=True
             )
 
+        # Create transfers table
+        if self.transfers_table not in self.db.table_names():
+            self.db.create_table(
+                self.transfers_table,
+                {
+                    "id": int,
+                    "source_id": int,  # References profiles.id
+                    "beneficiary_id": int,  # References profiles.id
+                    "amount": float,
+                    "date": str,  # Date of the transfer
+                    "created_at": str,
+                },
+                pk="id",
+            )
+            self.db[self.transfers_table].create_index(["source_id", "beneficiary_id"])
+            self.db[self.transfers_table].create_index(["created_at"])
+            self.db[self.transfers_table].create_index(["date"])
+
         # Add payment_source_id to expenses if not exists
         conn = self.db.conn
         cursor = conn.execute(f"PRAGMA table_info({self.expenses_table})")
@@ -182,6 +201,14 @@ class DatabaseManager:
                 f"ALTER TABLE {self.expenses_table} ADD COLUMN payment_source_id "
                 + " INTEGER REFERENCES {self.payment_sources_table}(id)"
             )
+
+        # Add date field to transfers if not exists
+        cursor = conn.execute(f"PRAGMA table_info({self.transfers_table})")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "date" not in columns:
+            conn.execute(f"ALTER TABLE {self.transfers_table} ADD COLUMN date TEXT")
+            # Set date to created_at for existing records
+            conn.execute(f"UPDATE {self.transfers_table} SET date = created_at")
 
     def add_expense(
         self,
@@ -926,4 +953,95 @@ class DatabaseManager:
 
         # Delete the payment source
         self.db[self.payment_sources_table].delete(payment_source_id)
+        return {"success": True}
+
+    def create_transfer(
+        self, source_id: int, beneficiary_id: int, amount: float, date: datetime
+    ) -> Dict[str, Any]:
+        """Create a new transfer between users.
+
+        Args:
+            source_id (int): ID of the user sending the money
+            beneficiary_id (int): ID of the user receiving the money
+            amount (float): Amount of money to transfer
+            date (datetime): Date of the transfer. Defaults to current time.
+
+        Returns:
+            Dict[str, Any]: Dict containing the created transfer or error message
+        """
+        # Verify both profiles exist
+        source_profile = self.db[self.profiles_table].get(source_id)
+        beneficiary_profile = self.db[self.profiles_table].get(beneficiary_id)
+
+        if not source_profile or not beneficiary_profile:
+            return {"error": "Source or beneficiary profile not found"}
+
+        # Create the transfer
+        transfer_data = {
+            "source_id": source_id,
+            "beneficiary_id": beneficiary_id,
+            "amount": amount,
+            "date": date.isoformat(),
+            "created_at": datetime.now().isoformat(),
+        }
+
+        try:
+            transfer_id = self.db[self.transfers_table].insert(transfer_data).last_pk
+            transfer = self.db[self.transfers_table].get(transfer_id)
+
+            if not transfer:
+                return {"error": "Failed to create transfer"}
+
+            return {"transfer": transfer}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_transfers(self) -> Dict[str, Any]:
+        """Get all transfers involving a user.
+
+        Args:
+            user_id (int): ID of the user
+            start_date (Optional[str]): Start date in ISO format
+            end_date (Optional[str]): End date in ISO format
+
+        Returns:
+            Dict[str, Any]: Dict containing list of transfers
+        """
+        conn = self.db.conn
+
+        # Build query
+        query = f"SELECT * FROM {self.transfers_table}"
+        params = {}
+
+        cursor = conn.execute(query, params)
+        rows = cursor.fetchall()
+
+        # Convert to dictionaries
+        column_names = [desc[0] for desc in cursor.description]
+        transfers = [dict(zip(column_names, row)) for row in rows]
+
+        return {"transfers": transfers}
+
+    def delete_transfer(self, transfer_id: int, user_id: int) -> Dict[str, Any]:
+        """Delete a transfer.
+
+        Args:
+            transfer_id (int): ID of the transfer to delete
+            user_id (int): ID of the user making the request
+
+        Returns:
+            Dict[str, Any]: Dict containing success status or error message
+        """
+        # Check if transfer exists and user is involved
+        transfer = self.db[self.transfers_table].get(transfer_id)
+
+        if not transfer:
+            return {"error": "Transfer not found"}
+
+        if transfer["source_id"] != user_id and transfer["beneficiary_id"] != user_id:
+            return {"error": "You can only delete transfers you're involved in"}
+
+        # Delete the transfer
+        self.db[self.transfers_table].delete(transfer_id)
+
         return {"success": True}

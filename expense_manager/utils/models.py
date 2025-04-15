@@ -120,6 +120,32 @@ class Profile(BaseModel):
     )
 
 
+class Transfer(BaseModel):
+    """Model representing a money transfer between users.
+
+    This model represents a direct transfer of money between two users.
+    """
+
+    id: int = Field(..., description="Unique ID of the transfer")
+    source_id: int = Field(..., description="ID of the user sending the money")
+    beneficiary_id: int = Field(..., description="ID of the user receiving the money")
+    amount: float = Field(..., description="Amount of money transferred")
+    created_at: datetime = Field(
+        ..., description="Timestamp of when the transfer was created"
+    )
+
+
+class TransferCreate(BaseModel):
+    """Model for creating a new transfer.
+
+    This model represents the data needed to create a new transfer.
+    """
+
+    source_id: int = Field(..., description="ID of the user sending the money")
+    beneficiary_id: int = Field(..., description="ID of the user receiving the money")
+    amount: float = Field(..., description="Amount of money to transfer")
+
+
 class ExpenseSummary(BaseModel):
     """Model for expense summaries.
 

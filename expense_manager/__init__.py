@@ -14,6 +14,8 @@ from expense_manager.utils.models import (
     ExpenseSummary,
     ExpenseUpdate,
     Profile,
+    Transfer,
+    TransferCreate,
     User,
 )
 
@@ -29,4 +31,6 @@ __all__ = [
     "User",
     "Profile",
     "ExpenseSummary",
+    "Transfer",
+    "TransferCreate",
 ]
