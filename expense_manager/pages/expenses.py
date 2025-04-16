@@ -392,6 +392,9 @@ def display_expense_list(db_manager: DatabaseManager, profile_id: int) -> None:
         display_df["amount"] = display_df["amount_formatted"]
         display_df = display_df.drop(columns=["amount_formatted"])
 
+    # Sort expenses by created_at in descending order
+    display_df = display_df.sort_values("created_at", ascending=False)
+
     # Select columns for display
     display_columns = [
         "date",
