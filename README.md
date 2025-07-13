@@ -46,6 +46,62 @@ The application uses YAML configuration files to customize settings like databas
 
 The app uses the development profile by default.
 
+## Docker Deployment
+
+The application can be deployed using Docker containers for easy distribution and deployment.
+
+### Quick Start with Docker
+
+1. **Using Docker Compose:**
+   ```bash
+   docker-compose up --build
+   ```
+
+2. **Access the application:**
+   Open your browser and navigate to `http://localhost:8501`
+
+3. **Stop the application:**
+   ```bash
+   docker-compose down
+   ```
+
+### Running in Background
+
+To run the container in the background (detached mode):
+
+1. **Start in background:**
+   ```bash
+   docker-compose up -d
+   ```
+
+2. **Start in background with rebuild:**
+   ```bash
+   docker-compose up -d --build
+   ```
+
+3. **Check container status:**
+   ```bash
+   docker-compose ps
+   ```
+
+4. **View logs:**
+   ```bash
+   docker-compose logs -f
+   ```
+
+5. **Stop the background container:**
+   ```bash
+   docker-compose down
+   ```
+
+6. **Restart the container:**
+   ```bash
+   docker-compose restart
+   ```
+
+**Note:** The container is configured with `restart: unless-stopped`, so it will automatically restart if it crashes.
+
+
 ## Running the Application
 
 Run the Streamlit app with a simple command:

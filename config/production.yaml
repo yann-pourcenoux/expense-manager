@@ -1,5 +1,5 @@
 database:
-  path: expense_manager_prod.db
+  path: /app/data/expense_manager_prod.db
 server:
   port: 8501
-  address: localhost
+  address: 0.0.0.0

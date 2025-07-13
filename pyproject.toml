@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A simple interface to get insights from expenses"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = "MIT"
 dependencies = [
     "streamlit>=1.27.0",
     "sqlite-utils>=3.36",
