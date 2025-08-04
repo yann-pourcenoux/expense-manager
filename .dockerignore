@@ -52,4 +52,4 @@ migration-instructions.md
 expense_manager_dev.db
 
 # Production artifacts
-.prod/ 
+.prod/
