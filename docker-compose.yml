@@ -27,4 +27,4 @@ networks:
 
 volumes:
   expense-data:
-    driver: local 
+    driver: local

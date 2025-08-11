@@ -329,48 +329,46 @@ def display_expense_list(db_manager: DatabaseManager, profile_id: int) -> None:
         end_date = st.date_input(
             "To", value=datetime.now(), min_value=start_date, max_value=datetime.now()
         )
-    
+
     # Additional filter controls
     st.subheader("Filters")
-    
+
     # Get categories and payment sources for filter options
     categories_result = db_manager.get_categories()
     categories = categories_result.get("categories", [])
-    
+
     payment_sources_result = db_manager.get_payment_sources(
         st.session_state.user.id
         if hasattr(st.session_state.user, "id")
         else st.session_state.user["id"]
     )
     payment_sources = payment_sources_result.get("payment_sources", [])
-    
+
     # Filter controls in columns
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
         # Category filter
         category_filter = st.multiselect(
             "Filter by Category",
             options=[cat["name"] for cat in categories],
             default=[],
-            help="Select one or more categories to filter by"
+            help="Select one or more categories to filter by",
         )
-    
+
     with col2:
         # Payment source filter
         payment_source_filter = st.multiselect(
             "Filter by Payment Source",
             options=[ps["name"] for ps in payment_sources],
             default=[],
-            help="Select one or more payment sources to filter by"
+            help="Select one or more payment sources to filter by",
         )
-    
+
     with col3:
         # Name filter
         name_filter = st.text_input(
-            "Filter by Name",
-            value="",
-            help="Enter text to search in expense names"
+            "Filter by Name", value="", help="Enter text to search in expense names"
         )
 
     # Convert to datetime for filtering
@@ -397,42 +395,43 @@ def display_expense_list(db_manager: DatabaseManager, profile_id: int) -> None:
 
     # Apply additional filters
     filtered_expenses = expenses.copy()
-    
+
     # Filter by category if categories are selected
     if category_filter:
         # Get category IDs for selected category names
         selected_category_ids = [
-            cat["id"] for cat in categories 
-            if cat["name"] in category_filter
+            cat["id"] for cat in categories if cat["name"] in category_filter
         ]
         filtered_expenses = [
-            exp for exp in filtered_expenses
+            exp
+            for exp in filtered_expenses
             if exp.get("category_id") in selected_category_ids
         ]
-    
+
     # Filter by payment source if payment sources are selected
     if payment_source_filter:
         # Get payment source IDs for selected payment source names
         selected_payment_source_ids = [
-            ps["id"] for ps in payment_sources
-            if ps["name"] in payment_source_filter
+            ps["id"] for ps in payment_sources if ps["name"] in payment_source_filter
         ]
         filtered_expenses = [
-            exp for exp in filtered_expenses
+            exp
+            for exp in filtered_expenses
             if exp.get("payment_source_id") in selected_payment_source_ids
         ]
-    
+
     # Filter by name if name filter is provided
     if name_filter.strip():
         name_filter_lower = name_filter.strip().lower()
         filtered_expenses = [
-            exp for exp in filtered_expenses
+            exp
+            for exp in filtered_expenses
             if exp.get("name") and name_filter_lower in exp["name"].lower()
         ]
-    
+
     # Update expenses variable to use filtered data
     expenses = filtered_expenses
-    
+
     if not expenses:
         st.info(
             "No expenses found matching your filters. Try adjusting your filter criteria."
